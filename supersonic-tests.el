@@ -2868,14 +2868,14 @@ the endpoint that was asked."
   "The Subsonic provider flattens every letter bucket of getArtists'
 \"index\" array into a single list of artists, in bucket order, covering
 every bucket rather than just the first -- and the artists buffer turns
-those into one (id [name]) row apiece."
+those into one (id [name art]) row apiece."
   (let* ((data
           '(("subsonic-response" ("artists" ("index"
                (("artist" (("id" . "1") ("name" . "Alice")) (("id" . "2") ("name" . "Bob"))))
                (("artist" (("id" . "3") ("name" . "Carl")))))))))
          (artists (supersonic-subsonic--artists-from data)))
     (should (equal '((:id "1" :name "Alice") (:id "2" :name "Bob") (:id "3" :name "Carl")) artists))
-    (should (equal '(("1" ["Alice"]) ("2" ["Bob"]) ("3" ["Carl"])) (supersonic-artists-rows artists)))))
+    (should (equal '(("1" ["Alice" ""]) ("2" ["Bob" ""]) ("3" ["Carl" ""])) (supersonic-artists-rows artists)))))
 
 (ert-deftest supersonic-tests-albums-buffer-becomes-current ()
   "`supersonic-albums' leaves the freshly created album-list buffer as
@@ -4409,7 +4409,7 @@ any Subsonic request being made."
         (unwind-protect
             (with-current-buffer buff
               (aio-wait-for (supersonic-artists-refresh buff))
-              (should (equal '(("ar/1" ["Alice"]) ("ar/2" ["Bob"])) tabulated-list-entries))
+              (should (equal '(("ar/1" ["Alice" ""]) ("ar/2" ["Bob" ""])) tabulated-list-entries))
               (aio-wait-for (supersonic-albums-refresh "ar/1" buff))
               (should (equal '("ar/1/al-1" "ar/1/al-2") (mapcar #'car tabulated-list-entries)))
               (should (equal "1999" (aref (cadr (car tabulated-list-entries)) 0)))
@@ -6655,6 +6655,154 @@ not by its id, and an item without one simply gets no art."
             (should (equal '("cover-1" "cover-9" "cover-p") (mapcar #'car (reverse requests))))))
       (kill-buffer buff)
       (delete-directory supersonic-cache-path t))))
+
+;; The artist list holds the whole library: its art comes in as rows are
+;; scrolled to, not all of it up front.
+(defmacro supersonic-tests--with-artist-list (count &rest body)
+  "Run BODY in an artist list of COUNT artists shown in the selected window.
+Every artist but the second has art \"art-N\"; REQUESTS, bound for
+BODY, collects each (ART . SIZE) the provider was asked for, newest
+first.  Art is drawn as \"ART:\" plus its reference."
+  (declare (indent 1))
+  `(let ((supersonic-cache-path (make-temp-file "supersonic-tests-cache-" t))
+         (supersonic-enable-art t)
+         (supersonic-artist-art-size 64)
+         (requests nil)
+         (buff (generate-new-buffer "*supersonic-tests-artists*"))
+         (artists (mapcar (lambda (i)
+                            (append (list :id (format "ar-%d" i) :name (format "Artist %d" i))
+                                    (unless (= i 2) (list :art (format "art-%d" i)))))
+                          (number-sequence 1 ,count))))
+     (unwind-protect
+         (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t))
+                   ((symbol-function 'supersonic-image-propertize) (lambda (art _size &rest _) (concat "ART:" art))))
+           (supersonic-tests--with-provider
+               `((cover-art . ,(supersonic-tests--cover-art (lambda (r) (push r requests))))
+                 (artists . ,(lambda () (funcall (supersonic-tests--resolved artists)))))
+             (save-window-excursion
+               (supersonic--init-list-buffer buff #'supersonic-artist-mode "Loading artists...")
+               (set-window-buffer (selected-window) buff)
+               (with-current-buffer buff
+                 ,@body))))
+       (kill-buffer buff)
+       (delete-directory supersonic-cache-path t))))
+
+(defun supersonic-tests--artist-cell (id)
+  "Return the Art cell of the artist ID in the current artist list."
+  (aref (cadr (assoc id tabulated-list-entries)) 1))
+
+(ert-deftest supersonic-tests-artist-art-is-fetched-for-the-rows-in-view ()
+  "The artist list fetches art at `supersonic-artist-art-size' for the
+rows its window shows, not for the whole library, and draws each row
+in place as its art arrives; an artist without art is left without.
+The rest follows as the window scrolls to it."
+  (supersonic-tests--with-artist-list 500
+    (aio-wait-for (supersonic-artists-refresh buff))
+    (should (supersonic-tests--wait-for (lambda () (equal "ART:art-1" (supersonic-tests--artist-cell "ar-1")))))
+    (should (equal "" (supersonic-tests--artist-cell "ar-2")))
+    (should (string-match-p "Artist 1 *ART:art-1$" (buffer-string)))
+    (should (= 64 (cdar requests)))
+    (let ((first-screen (length requests)))
+      (should (< 0 first-screen (window-body-height)))
+      (should-not (assoc "art-400" requests))
+      (goto-char (point-min))
+      (forward-line 399)
+      (set-window-start (selected-window) (point))
+      (supersonic-art--fill-windows)
+      (should (supersonic-tests--wait-for (lambda () (equal "ART:art-400" (supersonic-tests--artist-cell "ar-400")))))
+      (should (< (length requests) (* 2 (window-body-height))))
+      (should (equal (length requests) (length (delete-dups (mapcar #'car requests)))))
+      (should (string-match-p "ART:art-1$" (supersonic-tests--artist-cell "ar-1"))))))
+
+(ert-deftest supersonic-tests-artist-art-refresh-drops-the-old-lists-requests ()
+  "Refreshing the artist list while art is still coming in starts over
+for the new list: requests of the old one that have not got a slot yet
+are dropped rather than fetched, so a refresh never piles a second set
+of fetches onto the first."
+  (supersonic-tests--with-artist-list 500
+    (let ((supersonic-art-fetch-concurrency 1))
+      (setq supersonic-art--lazy-sem nil)
+      (aio-wait-for (supersonic-artists-refresh buff))
+      (aio-wait-for (supersonic-artists-refresh buff))
+      (should (supersonic-tests--wait-for (lambda () (equal "ART:art-1" (supersonic-tests--artist-cell "ar-1")))))
+      (should (supersonic-tests--wait-for
+               (lambda () (equal "ART:art-3" (supersonic-tests--artist-cell "ar-3")))))
+      (sleep-for 0.2)
+      (should (equal (length requests) (length (delete-dups (mapcar #'car requests))))))))
+
+(ert-deftest supersonic-tests-artist-art-size-nil-leaves-the-list-without-art ()
+  "With `supersonic-artist-art-size' nil the artist list has no Art
+column and asks for no art at all."
+  (supersonic-tests--with-artist-list 5
+    (let ((supersonic-artist-art-size nil))
+      (supersonic-artist-mode)
+      (should (equal [("Artist" 30 t)] tabulated-list-format))
+      (aio-wait-for (supersonic-artists-refresh buff))
+      (sleep-for 0.1)
+      (should (string-match-p "Artist 1$" (buffer-string)))
+      (should-not requests))))
+
+(ert-deftest supersonic-tests-artist-art-follows-the-rows-through-sorting ()
+  "Each artist gets its own art also when the list is sorted otherwise
+than the provider ordered it, as a refresh keeps the sort the user
+picked: rows are matched to their art by id, not by position."
+  (supersonic-tests--with-artist-list 5
+    (setq tabulated-list-sort-key '("Artist" . t))
+    (aio-wait-for (supersonic-artists-refresh buff))
+    (should (equal "ar-5" (caar tabulated-list-entries)))
+    (should (supersonic-tests--wait-for (lambda () (equal "ART:art-5" (supersonic-tests--artist-cell "ar-5")))))
+    (dolist (i '(1 3 4 5))
+      (should (equal (format "ART:art-%d" i) (supersonic-tests--artist-cell (format "ar-%d" i)))))
+    (should (equal "" (supersonic-tests--artist-cell "ar-2")))))
+
+(ert-deftest supersonic-tests-artist-list-has-no-art-column-without-art ()
+  "Where art cannot be shown, e.g. in a terminal, the artist list has no
+Art column, which would only take room from the names."
+  (supersonic-tests--with-artist-list 3
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) nil)))
+      (supersonic-artist-mode)
+      (should (equal [("Artist" 30 t)] tabulated-list-format))
+      (aio-wait-for (supersonic-artists-refresh buff))
+      (sleep-for 0.1)
+      (should-not requests))))
+
+(ert-deftest supersonic-tests-artist-art-skips-rows-scrolled-away ()
+  "A row scrolled out of view before its fetch got a slot is not fetched
+-- the rows now in view are not kept waiting behind it -- and is asked
+for again once it is back in view."
+  (supersonic-tests--with-artist-list 500
+    (let ((supersonic-art-fetch-concurrency 1))
+      (setq supersonic-art--lazy-sem nil)
+      (aio-wait-for (supersonic-artists-refresh buff))
+      (goto-char (point-min))
+      (forward-line 399)
+      (set-window-start (selected-window) (point))
+      (supersonic-art--fill-windows)
+      (should (supersonic-tests--wait-for (lambda () (equal "ART:art-400" (supersonic-tests--artist-cell "ar-400")))))
+      (sleep-for 0.2)
+      (should (<= (seq-count (lambda (r) (< (string-to-number (substring (car r) 4)) 100)) requests) 1))
+      (set-window-start (selected-window) (point-min))
+      (goto-char (point-min))
+      (supersonic-art--fill-windows)
+      (should (supersonic-tests--wait-for (lambda () (equal "ART:art-5" (supersonic-tests--artist-cell "ar-5"))))))))
+
+(ert-deftest supersonic-tests-artist-art-keeps-point-on-its-row ()
+  "Redrawing a row as its art arrives leaves point where it was in it."
+  (supersonic-tests--with-artist-list 5
+    (aio-wait-for (supersonic-artists-refresh buff))
+    (should (supersonic-tests--wait-for (lambda () (equal "ART:art-5" (supersonic-tests--artist-cell "ar-5")))))
+    (setq supersonic-art--lazy nil)
+    (dolist (entry tabulated-list-entries) (aset (cadr entry) 1 ""))
+    (tabulated-list-print t)
+    (goto-char (point-min))
+    (while (not (equal "ar-3" (tabulated-list-get-id))) (forward-line 1))
+    (move-to-column 5)
+    (let ((line (line-number-at-pos)))
+      (supersonic-art-fill-visible
+       (mapcar (lambda (i) (list :id (format "ar-%d" i) :art (format "art-%d" i))) '(1 2 3 4 5)) 1 64 buff)
+      (should (equal "ART:art-3" (supersonic-tests--artist-cell "ar-3")))
+      (should (= line (line-number-at-pos)))
+      (should (= 5 (current-column))))))
 
 (ert-deftest supersonic-tests-no-cover-art-means-no-art-and-no-error ()
   "With a provider that has no `cover-art', lists and now-playing render

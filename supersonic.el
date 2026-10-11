@@ -1876,8 +1876,11 @@ one as a string is accepted too."
   (supersonic-albums (tabulated-list-get-id)))
 
 (defun supersonic-artists-rows (artists)
-  "Turn ARTISTS, as resolved by `supersonic-provider-artists', into entries."
-  (mapcar (lambda (artist) (list (plist-get artist :id) (vector (or (plist-get artist :name) "")))) artists))
+  "Turn ARTISTS, as resolved by `supersonic-provider-artists', into entries.
+Each row has the artist's name and a cell for its art, which
+`supersonic-art-fill-visible' fills in -- or which goes unprinted when
+the list has no Art column, see `supersonic-artists-format'."
+  (mapcar (lambda (artist) (list (plist-get artist :id) (vector (or (plist-get artist :name) "") ""))) artists))
 
 (aio-defun
  supersonic-artists-refresh (buff) "Refresh the list of artists into BUFF."
@@ -1886,7 +1889,9 @@ one as a string is accepted too."
   (let ((artists (aio-await (supersonic-provider-artists))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
-        (supersonic--print-list (supersonic-artists-rows artists)))))))
+        (supersonic--print-list (supersonic-artists-rows artists))
+        (when (> (length tabulated-list-format) 1)
+          (supersonic-art-fill-visible artists 1 supersonic-artist-art-size buff)))))))
 
 (defun supersonic-artists-revert ()
   "Refresh the artists buffer from the active library provider."
@@ -1909,13 +1914,26 @@ one as a string is accepted too."
     (ignore (supersonic-artists-refresh new-buff))
     (pop-to-buffer-same-window new-buff)))
 
+(defun supersonic-artists-format ()
+  "Return the `tabulated-list-format' of the artist list.
+With an Art column only when `supersonic-artist-art-size' is set and
+art can be shown at all (`supersonic-art-available-p'): an empty one
+would still take the room `supersonic--fit-columns' keeps for the last
+column from the names.  The column is as wide as an image of that size
+in the selected frame, the images being fitted into a square of it,
+whatever their proportions."
+  (if (and supersonic-artist-art-size (supersonic-art-available-p))
+      `[("Artist" 30 t) ("Art" ,(max 3 (1+ (ceiling supersonic-artist-art-size (frame-char-width)))) nil)]
+    [("Artist" 30 t)]))
+
 (define-derived-mode
  supersonic-artist-mode
  tabulated-list-mode
  "Supersonic Artists"
  "Major mode for the artist list opened by `supersonic-artists'."
- (setq tabulated-list-format [("Artist" 30 t)])
+ (setq tabulated-list-format (supersonic-artists-format))
  (setq tabulated-list-padding 2)
+ (setq tabulated-list-use-header-line supersonic-list-use-header-line)
  (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
  (tabulated-list-init-header))
 

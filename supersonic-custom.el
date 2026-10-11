@@ -138,13 +138,25 @@ re-download of anything already cached at the old size."
   :type 'integer
   :group 'supersonic)
 
+(defcustom supersonic-artist-art-size 64
+  "Height in pixels of the artist images in the artist list, or nil for none.
+Smaller than `supersonic-list-art-size' because the artist list holds
+the whole library and is browsed rather than looked at: every row is
+this high.  Only the rows in view are fetched, see
+`supersonic-art-fill-visible'.  Like that setting, a new size means
+fetching the images again.  Read when the artist list is opened, so it
+takes effect for the next one."
+  :type '(choice (const :tag "No artist images" nil) integer)
+  :group 'supersonic)
+
 (defcustom supersonic-list-use-header-line nil
-  "Where the column headers go in supersonic's album and podcast list buffers.
-Seeded into `tabulated-list-use-header-line' by `supersonic-album-mode',
-`supersonic-album-type-mode', `supersonic-podcast-mode' and
-`supersonic-podcast-episodes-mode', which is the whole of its reach --
-the other list buffers (tracks, artists, search results, the play
-queue) leave that variable at its own default and are unaffected.
+  "Where the column headers go in supersonic's artist, album and podcast lists.
+Seeded into `tabulated-list-use-header-line' by `supersonic-artist-mode',
+`supersonic-album-mode', `supersonic-album-type-mode',
+`supersonic-podcast-mode' and `supersonic-podcast-episodes-mode', which
+is the whole of its reach -- the other list buffers (tracks, search
+results, the play queue) leave that variable at its own default and are
+unaffected.
 
 This chooses between the two ways tabulated-list can present the column
 names, not between showing and hiding them: non-nil puts them in the
