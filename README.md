@@ -34,12 +34,10 @@ Contents:
 - [Credentials in KeePassXC](#credentials-in-keepassxc-via-secret-service), [elsewhere](#credentials-from-elsewhere)
 - [Usage](#usage): [play queue](#play-queue), [now playing](#now-playing), [cover art](#cover-art), [MPRIS](#mpris)
 
-<img width="1445" height="1041" alt="image" src="https://github.com/user-attachments/assets/095571c2-0c8c-4c38-9fa8-d1ae1b5c10ec" />
-<img width="1924" height="1081" alt="image" src="https://github.com/user-attachments/assets/e7e698ca-6b1f-4505-8452-1118b6a66762" />
-<img width="1920" height="1042" alt="image" src="https://github.com/user-attachments/assets/0bfad485-afe9-4ab8-972a-5ce8d26925ce" />
+<img width="1590" height="982" alt="image" src="https://github.com/user-attachments/assets/4879a05f-e749-4a7a-9dd1-0420a9006648" />
+<img width="825" height="998" alt="image" src="https://github.com/user-attachments/assets/44945d52-72d2-4825-9e31-d5faca1172ff" />
 
-<img width="2560" height="1440" alt="image" src="https://github.com/user-attachments/assets/5083c2f6-61de-43ee-b403-a0a3e5cb29d5" />
-<img width="859" height="983" alt="image" src="https://github.com/user-attachments/assets/11cc18f2-5581-472a-b648-c2089b54770d" />
+<img width="1445" height="1041" alt="image" src="https://github.com/user-attachments/assets/095571c2-0c8c-4c38-9fa8-d1ae1b5c10ec" />
 
 Based on [subsonic.el](https://git.sr.ht/~amk/subsonic.el)
 
