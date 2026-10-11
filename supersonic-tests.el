@@ -2583,6 +2583,34 @@ error."
                 (should (string-match-p "Wrong username or password" (buffer-string)))))
           (kill-buffer buff))))))
 
+(ert-deftest supersonic-tests-subsonic-wrong-password-forgets-credentials ()
+  "A Subsonic \"wrong username or password\" drops the credentials
+`supersonic-cached' kept for `supersonic-host', so that trying again
+asks for them afresh, and says so; any other failure keeps them, as
+does a rejection with nothing kept for that server, which does not
+suggest trying again."
+  (supersonic-tests--with-credentials-cache
+    (let ((supersonic-host "a")
+          (cached (supersonic-cached (lambda (_host) '(:user "alice" :secret "hunter2"))))
+          (other (supersonic-cached (lambda (_server) "custom-token"))))
+      (funcall cached "a")
+      (funcall other "http://ma.test:8095")
+      (supersonic-tests--with-stubbed-response
+          "{\"subsonic-response\":{\"status\":\"failed\",\"error\":{\"code\":70,\"message\":\"Not found\"}}}"
+        (should-error (aio-wait-for (supersonic-get-json "dummy://url")) :type 'user-error))
+      (should (= 2 (hash-table-count supersonic--credentials-cache)))
+      (supersonic-tests--with-stubbed-response
+          "{\"subsonic-response\":{\"status\":\"failed\",\"error\":{\"code\":40,\"message\":\"Wrong username or password\"}}}"
+        (let ((err (should-error (aio-wait-for (supersonic-get-json "dummy://url")) :type 'user-error)))
+          (should (string-match-p "Wrong username or password" (error-message-string err)))
+          (should (string-match-p "try again" (error-message-string err)))))
+      (should (= 1 (hash-table-count supersonic--credentials-cache)))
+      (supersonic-tests--with-stubbed-response
+          "{\"subsonic-response\":{\"status\":\"failed\",\"error\":{\"code\":40,\"message\":\"Wrong username or password\"}}}"
+        (let ((err (should-error (aio-wait-for (supersonic-get-json "dummy://url")) :type 'user-error)))
+          (should-not (string-match-p "try again" (error-message-string err)))))
+      (should (= 1 (hash-table-count supersonic--credentials-cache))))))
+
 (ert-deftest supersonic-tests-auth-picks-up-host-change-at-runtime ()
   "`supersonic-auth' re-resolves against `auth-source-search' as soon as
 `supersonic-host' changes, instead of keeping whatever was looked up
@@ -2610,6 +2638,200 @@ keeping whatever supersonic itself first memoized for that host."
       (should (equal "wrong-user" (plist-get (supersonic-auth) :user)))
       (setq user "right-user")
       (should (equal "right-user" (plist-get (supersonic-auth) :user))))))
+
+(defmacro supersonic-tests--with-credentials-cache (&rest body)
+  "Run BODY with a credentials cache of its own, starting out empty."
+  (declare (indent 0))
+  `(let ((supersonic--credentials-cache (make-hash-table :test #'equal))
+         (supersonic-credentials-cache-expiry 3600))
+     ,@body))
+
+(ert-deftest supersonic-tests-cached-asks-once-per-server ()
+  "`supersonic-cached' asks the function it wraps once per server, and
+answers again from what it kept."
+  (supersonic-tests--with-credentials-cache
+    (let* ((asked nil)
+           (cached (supersonic-cached (lambda (server) (push server asked) (concat "token-" server)))))
+      (should (equal "token-a" (funcall cached "a")))
+      (should (equal "token-a" (funcall cached "a")))
+      (should (equal "token-b" (funcall cached "b")))
+      (should (equal '("b" "a") asked)))))
+
+(ert-deftest supersonic-tests-cached-asks-again-once-expired ()
+  "What `supersonic-cached' keeps is asked for again after
+`supersonic-credentials-cache-expiry' seconds."
+  (supersonic-tests--with-credentials-cache
+    (let* ((now 1000.0)
+           (asked 0)
+           (cached (supersonic-cached (lambda (_server) (setq asked (1+ asked)) "token"))))
+      (cl-letf (((symbol-function 'float-time) (lambda (&optional _) now)))
+        (funcall cached "a")
+        (setq now (+ now 3599))
+        (funcall cached "a")
+        (should (= 1 asked))
+        (setq now (+ now 2))
+        (funcall cached "a")
+        (should (= 2 asked))))))
+
+(ert-deftest supersonic-tests-cached-keeps-nothing-found ()
+  "Finding nothing -- no token, or credentials without a password -- is
+not kept, so that the next request asks again."
+  (supersonic-tests--with-credentials-cache
+    (dolist (result (list nil '(:user "alice" :secret nil) (list :user "alice" :secret #'ignore)))
+      (let* ((asked 0)
+             (cached (supersonic-cached (lambda (_server) (setq asked (1+ asked)) result))))
+        (funcall cached "a")
+        (funcall cached "a")
+        (should (= 2 asked))))))
+
+(ert-deftest supersonic-tests-cached-resolves-a-secret-function-once ()
+  "A secret handed out as a function is called once and its result kept:
+keeping the function would ask its source again on every request."
+  (supersonic-tests--with-credentials-cache
+    (let* ((reads 0)
+           (secret (lambda () (setq reads (1+ reads)) "hunter2"))
+           (credentials (supersonic-cached (lambda (_host) (list :user "alice" :secret secret))))
+           (token (supersonic-cached (lambda (_server) secret))))
+      (should (equal '(:user "alice" :secret "hunter2") (funcall credentials "a")))
+      (should (equal '(:user "alice" :secret "hunter2") (funcall credentials "a")))
+      (should (equal "hunter2" (funcall token "a")))
+      (should (equal "hunter2" (funcall token "a")))
+      (should (= 2 reads)))))
+
+(ert-deftest supersonic-tests-cached-keeps-its-own-copy ()
+  "`supersonic-cached' keeps a copy of the secret, so that its source
+wiping the string it handed out -- as `password-cache-remove' does on
+expiry -- does not change what is kept."
+  (supersonic-tests--with-credentials-cache
+    (let* ((secret (copy-sequence "hunter2"))
+           (token (copy-sequence "custom-token"))
+           (credentials (supersonic-cached (lambda (_host) (list :user "alice" :secret secret))))
+           (tokens (supersonic-cached (lambda (_server) token))))
+      (funcall credentials "a")
+      (funcall tokens "a")
+      (clear-string secret)
+      (clear-string token)
+      (should (equal "hunter2" (plist-get (funcall credentials "a") :secret)))
+      (should (equal "custom-token" (funcall tokens "a"))))))
+
+(ert-deftest supersonic-tests-cached-takes-a-function-for-the-token ()
+  "A token handed out as a function is a token, not a plist -- even one
+that is a list, as interpreted closures are on Emacs 28 and 29."
+  (supersonic-tests--with-credentials-cache
+    (let ((cached (supersonic-cached (lambda (_server) '(lambda () "custom-token")))))
+      (should (equal "custom-token" (funcall cached "a"))))))
+
+(ert-deftest supersonic-tests-cached-drops-what-expired ()
+  "Keeping something drops whatever else expired meanwhile -- that of
+another server, or of a function since wrapped anew -- rather than
+holding on to its secret until that very key is asked for again."
+  (supersonic-tests--with-credentials-cache
+    (let* ((now 1000.0)
+           (old (supersonic-cached (lambda (_server) "old-token")))
+           (new (supersonic-cached (lambda (_server) "new-token"))))
+      (cl-letf (((symbol-function 'float-time) (lambda (&optional _) now)))
+        (funcall old "a")
+        (setq now (+ now 3601))
+        (funcall new "a")
+        (should (= 1 (hash-table-count supersonic--credentials-cache)))))))
+
+(ert-deftest supersonic-tests-forget-credentials-asks-again ()
+  "`supersonic-forget-credentials' drops what every `supersonic-cached'
+function kept, for a password that has just been changed."
+  (supersonic-tests--with-credentials-cache
+    (let* ((asked 0)
+           (cached (supersonic-cached (lambda (_server) (setq asked (1+ asked)) "token"))))
+      (funcall cached "a")
+      ;; Returns nothing, so that `M-:' cannot echo what was kept.
+      (should-not (supersonic-forget-credentials))
+      (funcall cached "a")
+      (should (= 2 asked)))))
+
+(ert-deftest supersonic-tests-cached-keeps-only-user-and-secret ()
+  "Of the credentials found, only the user and the secret are kept --
+not everything else an auth-source entry carries, its notes included."
+  (supersonic-tests--with-credentials-cache
+    (let ((cached (supersonic-cached
+                   (lambda (_host) '(:host "a" :user "alice" :secret "hunter2" :Notes "private")))))
+      (should (equal '(:user "alice" :secret "hunter2") (funcall cached "a")))
+      (should (equal '(:user "alice" :secret "hunter2") (funcall cached "a"))))))
+
+(ert-deftest supersonic-tests-build-url-with-cached-credentials ()
+  "Wrapped in `supersonic-cached', the credentials are asked once for
+every url built."
+  (supersonic-tests--with-credentials-cache
+    (let* ((supersonic-host "http://music.test:4533")
+           (asked 0)
+           (supersonic-auth-function
+            (supersonic-cached (lambda (_host) (setq asked (1+ asked)) '(:user "alice" :secret "hunter2")))))
+      (dotimes (_ 5) (supersonic-build-url "/ping.view" nil))
+      (should (= 1 asked)))))
+
+(defun supersonic-tests--query-params (url)
+  "Return URL's query parameters as an alist of strings."
+  (url-parse-query-string (cadr (split-string url "?"))))
+
+(ert-deftest supersonic-tests-build-url-takes-credentials-from-auth-function ()
+  "`supersonic-auth-function' replaces the auth-source lookup outright,
+for a password kept somewhere auth-source cannot find it by host --
+such as a pass entry named for something else.  It is asked for
+`supersonic-host', which the url is built on, the user and token
+from what it returns."
+  (let ((supersonic-host "http://music.test:4533")
+        (supersonic-auth-function
+         (lambda (host)
+           (should (equal "http://music.test:4533" host))
+           '(:user "alice" :secret "hunter2"))))
+    (cl-letf (((symbol-function 'auth-source-search)
+               (lambda (&rest _) (ert-fail "Asked auth-source"))))
+      (let* ((url (supersonic-build-url "/ping.view" nil))
+             (params (supersonic-tests--query-params url)))
+        (should (string-prefix-p "http://music.test:4533/rest/ping.view?" url))
+        (should (equal '("alice") (assoc-default "u" params)))
+        (should (equal (list (md5 (concat "hunter2" (car (assoc-default "s" params)))))
+                       (assoc-default "t" params)))))))
+
+(ert-deftest supersonic-tests-build-url-accepts-the-secret-as-a-function ()
+  "The secret may also be a function returning it, as auth-source hands
+it out, so that it is only read when a request needs it."
+  (let ((supersonic-host "music.test")
+        (supersonic-auth-function (lambda (_host) (list :user "alice" :secret (lambda () "hunter2")))))
+    (let* ((url (supersonic-build-url "/ping.view" nil))
+           (params (supersonic-tests--query-params url)))
+      (should (string-prefix-p "https://music.test/rest/ping.view?" url))
+      (should (equal (list (md5 (concat "hunter2" (car (assoc-default "s" params)))))
+                     (assoc-default "t" params))))))
+
+(ert-deftest supersonic-tests-build-url-reports-missing-credentials ()
+  "No credentials -- an authinfo entry without a password included, which
+auth-source is told not to return -- is a `user-error', not a void
+function called in place of the secret."
+  (let ((supersonic-host "http://music.test:4533"))
+    (cl-letf (((symbol-function 'auth-source-search)
+               (lambda (&rest spec)
+                 (unless (plist-get spec :require)
+                   (list (list :host (plist-get spec :host) :user "alice"))))))
+      (should-error (supersonic-build-url "/ping.view" nil) :type 'user-error))))
+
+(ert-deftest supersonic-tests-build-url-reports-a-secret-function-finding-nothing ()
+  "A secret function returning nothing -- a pass entry that is not
+there -- is reported as missing credentials too, not sent as an empty
+password for the server to reject."
+  (let ((supersonic-host "http://music.test:4533")
+        (supersonic-auth-function (lambda (_host) (list :user "alice" :secret #'ignore))))
+    (should-error (supersonic-build-url "/ping.view" nil) :type 'user-error)))
+
+(ert-deftest supersonic-tests-build-url-looks-up-credentials-once ()
+  "One url asks auth-source once, not once for its host and again for
+its token."
+  (let ((supersonic-host "http://music.test:4533")
+        (lookups 0))
+    (cl-letf (((symbol-function 'auth-source-search)
+               (lambda (&rest spec)
+                 (setq lookups (1+ lookups))
+                 (list (list :host (plist-get spec :host) :user "alice" :secret (lambda () "p"))))))
+      (supersonic-build-url "/ping.view" nil)
+      (should (= 1 lookups)))))
 
 (ert-deftest supersonic-tests-subsonic-album-tracks-follow-browse-by-tags-toggle ()
   "The Subsonic provider reads an album's tracks from whichever json path
@@ -6510,6 +6732,36 @@ the token, and only once per server."
     (dolist (request supersonic-tests--ma-requests)
       (should-not (string-match-p "secret-token" (plist-get request :url))))))
 
+(ert-deftest supersonic-tests-ma-takes-the-token-from-token-function ()
+  "`supersonic-music-assistant-token-function' replaces the auth-source
+lookup outright.  It is asked for the server the operation talks to;
+the token it returns may be a string or a function returning one."
+  (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
+    (dolist (token (list "custom-token" (lambda () "custom-token")))
+      (let ((supersonic-music-assistant-token-function
+             (lambda (server)
+               (should (equal "http://ma.test:8095" server))
+               token))
+            (supersonic-tests--ma-requests nil))
+        (cl-letf (((symbol-function 'auth-source-search)
+                   (lambda (&rest _) (ert-fail "Asked auth-source"))))
+          (aio-wait-for (supersonic-provider-track "library://track/7131")))
+        (should (equal "Bearer custom-token"
+                       (assoc-default "Authorization" (plist-get (car supersonic-tests--ma-requests) :headers))))))))
+
+(ert-deftest supersonic-tests-ma-keeps-its-own-copy-of-the-token ()
+  "An operation sends its own copy of the token, so that a cache wiping
+the string it handed out -- as `password-cache-remove' does on expiry
+-- cannot change it while the operation still runs."
+  (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
+    (let* ((token (copy-sequence "custom-token"))
+           (supersonic-music-assistant-token-function (lambda (_server) token))
+           (promise (supersonic-provider-track "library://track/7131")))
+      (clear-string token)
+      (aio-wait-for promise)
+      (should (equal "Bearer custom-token"
+                     (assoc-default "Authorization" (plist-get (car supersonic-tests--ma-requests) :headers)))))))
+
 (defun supersonic-tests--ma-failure (operation)
   "Return the error OPERATION's promise rejects with, or nil if it resolves."
   (condition-case err
@@ -6807,6 +7059,23 @@ the token."
       (should (string-match-p "too old (schema 27)" (error-message-string err))))
     (should (equal '("http://ma.test:8095/info")
                    (mapcar (lambda (request) (plist-get request :url)) supersonic-tests--ma-requests)))))
+
+(ert-deftest supersonic-tests-ma-rejected-token-forgets-credentials ()
+  "A token Music Assistant rejects drops the credentials
+`supersonic-cached' kept for that server, so that trying again asks
+for them afresh; any other failure keeps them, and another server's
+are kept either way."
+  (dolist (case '((500 . 2) (401 . 1)))
+    (supersonic-tests--with-credentials-cache
+      (supersonic-tests--with-ma-server
+          (lambda (request)
+            (if (supersonic-tests--ma-command request)
+                (cons (car case) "Nope")
+              (cons 200 (supersonic-tests--ma-fixture "info"))))
+        (let ((supersonic-music-assistant-token-function (supersonic-cached (lambda (_server) "custom-token"))))
+          (funcall (supersonic-cached (lambda (_host) '(:user "alice" :secret "hunter2"))) "http://music.test:4533")
+          (should (supersonic-tests--ma-failure #'supersonic-provider-artists))
+          (should (= (cdr case) (hash-table-count supersonic--credentials-cache))))))))
 
 (ert-deftest supersonic-tests-ma-reports-each-failure-readably ()
   "A rejected token and a missing one or a missing URL are

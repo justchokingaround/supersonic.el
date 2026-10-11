@@ -50,10 +50,49 @@
 (defcustom supersonic-host ""
   "URL of the supersonic service, e.g. \"http://host:4533\".
 Must match the \"machine\" field of the corresponding authinfo
-entry verbatim; that entry's host is what is actually used to
-build request URLs.  May be given without a scheme (\"http://\" or
-\"https://\"), in which case \"https://\" is assumed."
+entry verbatim, unless `supersonic-auth-function' finds the
+credentials some other way.  May be given without a scheme
+\(\"http://\" or \"https://\"), in which case \"https://\" is
+assumed."
   :type 'string
+  :group 'supersonic)
+
+(declare-function supersonic-auth-source-credentials "supersonic-api")
+
+(defcustom supersonic-auth-function #'supersonic-auth-source-credentials
+  "Function returning the credentials for the Subsonic server.
+Called with the server, `supersonic-host', it returns a plist
+\(:user USER :secret SECRET), where SECRET is the password or a
+function returning it, or nil if it has none.  The default looks the
+server up in auth-source.
+
+For a password kept where auth-source cannot find it by host, such
+as a pass entry named for something else:
+
+  (setq supersonic-auth-function
+        (lambda (_host)
+          (list :user \"USERNAME\"
+                :secret (auth-source-pass-get \='secret \"my/entry\"))))
+
+It is called for every url built -- each track queued, each cover
+shown -- so a slow lookup, as decrypting that entry is, should be
+wrapped in `supersonic-cached':
+
+  (setq supersonic-auth-function
+        (supersonic-cached
+         (lambda (_host)
+           (list :user \"USERNAME\"
+                 :secret (auth-source-pass-get \='secret \"my/entry\")))))"
+  :type '(choice (function-item supersonic-auth-source-credentials)
+                 (function :tag "Other function"))
+  :group 'supersonic)
+
+(defcustom supersonic-credentials-cache-expiry 3600
+  "Seconds a function made by `supersonic-cached' keeps what it found.
+Read when something is kept, so a change applies to what is kept from
+then on, not to what already is.  `supersonic-forget-credentials'
+drops everything kept before it expires."
+  :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-mpv (executable-find "mpv")
@@ -558,8 +597,36 @@ host, so the authinfo line for it reads
   machine http://192.168.1.10:8095 password TOKEN
 
 where TOKEN is a long-lived token created in Music Assistant's web UI,
-under your profile."
+under your profile.  `supersonic-music-assistant-token-function' can
+look the token up some other way."
   :type 'string
+  :group 'supersonic)
+
+(declare-function supersonic-music-assistant-auth-source-token "supersonic-music-assistant")
+
+(defcustom supersonic-music-assistant-token-function
+  #'supersonic-music-assistant-auth-source-token
+  "Function returning the token for the Music Assistant server.
+Called with the server, `supersonic-music-assistant-url', once as an
+operation starts, it returns the token, a function returning it, or
+nil if it has none.  The default looks the server up in auth-source.
+
+For a token kept where auth-source cannot find it by host, such as a
+pass entry named for something else:
+
+  (setq supersonic-music-assistant-token-function
+        (lambda (_server) (auth-source-pass-get \='secret \"my/entry\")))
+
+Polling the player's state is an operation too, so while
+`music-assistant' is the backend this is called every
+`supersonic-music-assistant-poll-interval' seconds.  A slow lookup,
+as decrypting that entry is, should be wrapped in `supersonic-cached':
+
+  (setq supersonic-music-assistant-token-function
+        (supersonic-cached
+         (lambda (_server) (auth-source-pass-get \='secret \"my/entry\"))))"
+  :type '(choice (function-item supersonic-music-assistant-auth-source-token)
+                 (function :tag "Other function"))
   :group 'supersonic)
 
 (defcustom supersonic-music-assistant-player nil

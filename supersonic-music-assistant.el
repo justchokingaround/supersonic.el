@@ -41,9 +41,13 @@
 ;; Authentication is a long-lived token created in MA's web UI and
 ;; sent as `Authorization: Bearer'.  It is read from auth-source,
 ;; matched on `supersonic-music-assistant-url' exactly as Subsonic
-;; credentials are matched on `supersonic-host', and looked up afresh
-;; for every request, so it never sits in a variable, a URL or a
-;; subprocess's argv.  Token authentication needs server schema 28 or
+;; credentials are matched on `supersonic-host' -- or from wherever
+;; `supersonic-music-assistant-token-function' finds it -- and looked
+;; up afresh for every operation, so it never sits in a variable, a URL
+;; or a subprocess's argv.  Unless that function is wrapped in
+;; `supersonic-cached': that keeps the token in memory, for
+;; `supersonic-credentials-cache-expiry' seconds, though still in no
+;; URL or argv.  Token authentication needs server schema 28 or
 ;; later, so the server's unauthenticated `/info' is asked once per
 ;; server address before anything else.
 ;;
@@ -148,7 +152,7 @@ asked once per server rather than before every request.")
 (defun supersonic-music-assistant--server ()
   "Return `supersonic-music-assistant-url', signalling unless it is usable.
 It must name its scheme: it is matched verbatim against the authinfo
-host, and `url.el' cannot reach an address without one.  Read once
+host by default, and `url.el' cannot reach an address without one.  Read once
 per operation, by `supersonic-music-assistant--connection', so that
 the server checked, the token looked up and the server asked agree."
   (let ((server supersonic-music-assistant-url))
@@ -161,21 +165,29 @@ the server checked, the token looked up and the server asked agree."
 SERVER is as returned by `supersonic-music-assistant--server'."
   (concat (string-remove-suffix "/" server) path))
 
-(defun supersonic-music-assistant--token (server)
+(defun supersonic-music-assistant-auth-source-token (server)
   "Return the token auth-source has for SERVER, or nil if it has none.
+The default `supersonic-music-assistant-token-function'."
+  (plist-get (car (auth-source-search :host server :require '(:secret))) :secret))
+
+(defun supersonic-music-assistant--token (server)
+  "Return the token `supersonic-music-assistant-token-function' has for SERVER.
 SERVER is as returned by `supersonic-music-assistant--server', which
 also guarantees it is never nil or empty: a lookup for no host would
 match any entry, a Subsonic password included.  Looked up afresh for
 every operation, as `supersonic-auth' is for every request, so that a
-corrected entry takes effect once auth-source's cache is forgotten."
-  (let ((secret (plist-get (car (auth-source-search :host server :require '(:secret))) :secret)))
-    (if (functionp secret)
-        (funcall secret)
-      secret)))
+corrected entry takes effect once auth-source's cache is forgotten.
+
+A copy, as the operation holds on to it across requests: the string
+handed out may be one a cache wipes when it expires, as
+`password-cache-remove' does."
+  (let* ((token (funcall supersonic-music-assistant-token-function server))
+         (token (if (functionp token) (funcall token) token)))
+    (and token (copy-sequence token))))
 
 (defun supersonic-music-assistant--connection ()
   "Return what an operation sends its commands with, as (SERVER . TOKEN).
-TOKEN is nil when auth-source has none for SERVER; that is reported
+TOKEN is nil when there is none for SERVER; that is reported
 only once SERVER has passed `supersonic-music-assistant--check-server',
 so that a server too old to take a token at all says so first.
 
@@ -244,7 +256,8 @@ those are the user's to fix."
                (decode-coding-string (buffer-substring (1+ url-http-end-of-headers) (point-max)) 'utf-8))))
     (cond
      ((eql code 401)
-      (user-error "Music Assistant at %s rejected the token from auth-source" url))
+      (user-error "Music Assistant at %s rejected the token from `supersonic-music-assistant-token-function'%s"
+                  url (or (supersonic--forget-rejected-credentials supersonic-music-assistant-url) "")))
      ((not (and (integerp code) (< code 300)))
       (error "Music Assistant answered %s with %s: %s" url code body))
      (t
@@ -315,7 +328,7 @@ booleans and vectors for the arrays."
  (pcase-let ((`(,server . ,token) connection))
    (aio-await (supersonic-music-assistant--check-server server))
    (unless token
-     (user-error "No Music Assistant token in auth-source for host %s" server))
+     (user-error "No Music Assistant token for %s: add an authinfo entry with it as the machine, or set `supersonic-music-assistant-token-function'" server))
    (aio-await
     (supersonic-music-assistant--fetch
      (supersonic-music-assistant--url server "/api")
@@ -713,7 +726,7 @@ one server's cached art apart from another's."
 (defun supersonic-music-assistant--config-hints ()
   "Return what to check when a request to the Music Assistant server fails."
   (list "Check that supersonic-music-assistant-url points at your server, e.g. http://host:8095"
-        (format "Verify .authinfo has an entry with host %s (exactly) and a token from Music Assistant's web UI as its password"
+        (format "Verify .authinfo has an entry with host %s (exactly) and a token from Music Assistant's web UI as its password, or what supersonic-music-assistant-token-function returns"
                 (if (string-empty-p supersonic-music-assistant-url)
                     "<supersonic-music-assistant-url>"
                   supersonic-music-assistant-url))

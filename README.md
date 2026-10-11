@@ -31,7 +31,7 @@ Contents:
 - [Subsonic](#subsonic): [connection](#connecting-to-a-subsonic-server), [mpv](#local-playback-with-mpv), [jukebox](#jukebox), [UPnP/DLNA](#upnpdlna)
 - [Music Assistant](#music-assistant): [connection](#connecting-to-music-assistant), [players](#playing-on-a-music-assistant-player)
 - [Switching providers](#switching-providers)
-- [Credentials in KeePassXC](#credentials-in-keepassxc-via-secret-service)
+- [Credentials in KeePassXC](#credentials-in-keepassxc-via-secret-service), [elsewhere](#credentials-from-elsewhere)
 - [Usage](#usage): [play queue](#play-queue), [now playing](#now-playing), [cover art](#cover-art), [MPRIS](#mpris)
 
 <img width="1445" height="1041" alt="image" src="https://github.com/user-attachments/assets/095571c2-0c8c-4c38-9fa8-d1ae1b5c10ec" />
@@ -84,7 +84,8 @@ contents
 
 Make sure the `machine` field in your authinfo entry matches `supersonic-host`
 exactly, scheme included. To keep the credentials in KeePassXC
-instead, see [below](#credentials-in-keepassxc-via-secret-service).
+instead, see [below](#credentials-in-keepassxc-via-secret-service);
+for anywhere else, see [here](#credentials-from-elsewhere).
 
 ### Local playback with mpv
 
@@ -220,7 +221,8 @@ exactly, as for Subsonic:
     machine http://192.168.1.10:8095 password TOKEN
 
 To keep the token in KeePassXC instead, see
-[below](#credentials-in-keepassxc-via-secret-service).
+[below](#credentials-in-keepassxc-via-secret-service); for anywhere
+else, see [here](#credentials-from-elsewhere).
 
 It is sent in a request header only, never in a URL. Cover art comes
 from the server's image proxy, which needs no token, so none is sent
@@ -297,6 +299,62 @@ these on the `Advanced` tab of the entry:
   Assistant)
 
 The entry's regular password field is used as the secret.
+
+## Credentials from elsewhere
+
+If auth-source cannot find the password by the server's URL -- say it
+lives in a [pass](https://www.passwordstore.org/) entry that other
+programs use too, under a name of its own -- tell supersonic.el how to
+get it instead. `supersonic-auth-function` returns the Subsonic user
+name and password, `supersonic-music-assistant-token-function` the
+Music Assistant token:
+
+```elisp
+;; Subsonic
+(setq supersonic-auth-function
+      (lambda (_host)
+        (list :user "USERNAME"
+              :secret (auth-source-pass-get 'secret "my/custom_entry"))))
+
+;; Music Assistant
+(setq supersonic-music-assistant-token-function
+      (lambda (_server) (auth-source-pass-get 'secret "my/music_assistant")))
+```
+
+Each is called with the server's URL, so one function can serve
+several servers. The secret may also be a function returning it.
+
+By default neither result is kept: the Subsonic function is called
+for every URL built -- each track queued, each cover shown -- and the
+Music Assistant one once per operation, and also on every poll of the
+player's state while it is the backend, every
+`supersonic-music-assistant-poll-interval` seconds. That is fine for
+something cheap, such as reading a plain file, but
+`auth-source-pass-get` decrypts the entry every time. To keep what it
+found for a while, wrap the function in `supersonic-cached`:
+
+```elisp
+;; Subsonic
+(setq supersonic-auth-function
+      (supersonic-cached
+       (lambda (_host)
+         (list :user "USERNAME"
+               :secret (auth-source-pass-get 'secret "my/custom_entry")))))
+
+;; Music Assistant
+(setq supersonic-music-assistant-token-function
+      (supersonic-cached
+       (lambda (_server) (auth-source-pass-get 'secret "my/music_assistant"))))
+```
+
+What it found is kept for each server for
+`supersonic-credentials-cache-expiry` seconds, an hour by default.
+A server rejecting the password or token drops what was kept for it,
+so trying again asks afresh; `M-x supersonic-forget-credentials` drops
+everything by hand, e.g. right after changing a password. Only a
+rejection of a request supersonic.el reads itself counts: a Subsonic
+stream mpv fails to play, or a cover that does not load, drops
+nothing until the next list or search is rejected too.
 
 ## Usage
 
