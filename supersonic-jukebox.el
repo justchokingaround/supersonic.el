@@ -51,10 +51,10 @@
 ;; This file is deliberately one-directional, the same way
 ;; `supersonic-mpv.el' and `supersonic-mpris.el' are: it only knows the
 ;; facade's operation names and the Subsonic API, never any buffer
-;; supersonic.el renders.  Not loaded or activated automatically --
-;; `(require 'supersonic-jukebox)' and setting
-;; `supersonic-playback-backend' to `jukebox' are both opt-in, the same
-;; as enabling `supersonic-mpris-mode'.
+;; supersonic.el renders.  Nothing in the package requires this file:
+;; it is loaded the first time `supersonic-playback-backend' names
+;; `jukebox' -- see `supersonic-playback-backend-libraries' -- so
+;; selecting that backend is all it takes to opt in.
 ;;
 ;; No capability pre-checking is done for actions some servers may not
 ;; support: the action is sent and whatever error the server returns is

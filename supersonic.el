@@ -1931,7 +1931,7 @@ its artist."
 (defun supersonic--offers-p (operation)
   "Return non-nil if the transient should offer an entry needing OPERATION.
 That is, if the active provider implements it -- or is not registered
-at all, typically because its file is not loaded: hiding every entry
+at all, typically because its name is misspelled: hiding every entry
 would then leave no hint why, whereas using one reports that the
 provider is missing."
   (or (not (memq supersonic-provider (supersonic-provider-names)))

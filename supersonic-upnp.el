@@ -78,9 +78,10 @@
 ;; Where multicast does not get through, the description URL can be
 ;; entered by hand instead.
 ;;
-;; Nothing in the package requires this file: like the jukebox, the
-;; backend is opt-in.  `supersonic-upnp-select-renderer' is autoloaded,
-;; though.
+;; Nothing in the package requires this file: like the jukebox, it is
+;; loaded the first time `supersonic-playback-backend' names `upnp' --
+;; see `supersonic-playback-backend-libraries' -- or
+;; `supersonic-upnp-select-renderer', which is autoloaded, is called.
 
 ;;; Code:
 (require 'aio)
