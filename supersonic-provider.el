@@ -209,6 +209,15 @@ those are among them whether or not anything has used them yet."
     (maphash (lambda (name _operations) (push name names)) supersonic-provider--providers)
     (nreverse names)))
 
+(defun supersonic-provider-registered-p (provider)
+  "Return non-nil if PROVIDER is registered.
+Loads PROVIDER first if it is in `supersonic-provider-libraries', but
+no other provider -- unlike `supersonic-provider-names', which loads
+them all to list them."
+  (supersonic-provider--load provider)
+  ;; Not the operations themselves: a provider may register none.
+  (not (eq (gethash provider supersonic-provider--providers 'unregistered) 'unregistered)))
+
 (defun supersonic-provider-supports-p (operation &optional provider)
   "Return non-nil if PROVIDER implements OPERATION.
 PROVIDER defaults to the active one, `supersonic-provider'.  Never

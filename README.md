@@ -69,9 +69,10 @@ Example use-package config, for a Subsonic server played with mpv:
 To run it from a clone of this repository instead, install aio
 yourself and replace `:ensure t` with
 `:load-path "~/src/supersonic.el"`. A clone has no generated
-autoloads, so commands outside `supersonic.el` itself, such as
-`supersonic-mpris-mode`, need a `require` of their file first, e.g.
-`(require 'supersonic-mpris)`.
+autoloads, so commands outside `supersonic.el` itself --
+`supersonic-mpris-mode`, `supersonic-upnp-select-renderer` and
+`supersonic-music-assistant-select-player` -- need a `require` of
+their file first, e.g. `(require 'supersonic-mpris)`.
 
 The sections below show what to add for the other backends and for
 Music Assistant. Use the `supersonic` command to open a transient

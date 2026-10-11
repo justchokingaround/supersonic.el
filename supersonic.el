@@ -1909,7 +1909,7 @@ its artist."
        (when (equal answer "")
          (user-error "Kept the `%s' provider" supersonic-provider))
        (list (intern answer)))))
-  (unless (memq provider (supersonic-provider-names))
+  (unless (supersonic-provider-registered-p provider)
     (user-error "No library provider named `%s' is registered" provider))
   (let ((backend (or backend (supersonic-playback-backend-for-provider provider)))
         (provider-changes (not (eq provider supersonic-provider))))
@@ -1934,7 +1934,7 @@ That is, if the active provider implements it -- or is not registered
 at all, typically because its name is misspelled: hiding every entry
 would then leave no hint why, whereas using one reports that the
 provider is missing."
-  (or (not (memq supersonic-provider (supersonic-provider-names)))
+  (or (not (supersonic-provider-registered-p supersonic-provider))
       (supersonic-provider-supports-p operation)))
 
 (defun supersonic--offer-artists-p ()

@@ -4380,6 +4380,17 @@ then among `supersonic-provider-names'."
       (should (equal '((:id "ar/1")) (aio-wait-for (supersonic-provider-artists))))
       (should (memq 'lazy (supersonic-provider-names))))))
 
+(ert-deftest supersonic-tests-provider-registered-p-loads-only-what-it-is-asked ()
+  "`supersonic-provider-registered-p' loads the provider it is asked
+about and no other, so the transient's predicates do not load every
+provider just to check the active one."
+  (supersonic-tests--with-lazy-library 'supersonic-tests-lazy-provider
+      (supersonic-provider-register 'lazy '())
+    (let ((supersonic-provider-libraries '((lazy . supersonic-tests-lazy-provider))))
+      (should-not (supersonic-provider-registered-p 'supersonic-tests-nobody))
+      (should-not (featurep 'supersonic-tests-lazy-provider))
+      (should (supersonic-provider-registered-p 'lazy)))))
+
 (ert-deftest supersonic-tests-provider-album-list-rejects-unknown-types ()
   "`supersonic-provider-album-list' only passes on the types it documents."
   (supersonic-tests--with-provider supersonic-tests--fake-library
