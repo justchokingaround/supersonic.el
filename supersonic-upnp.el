@@ -1191,10 +1191,10 @@ makes the next track current if it moved on, see
 ;;;
 ;;; The facade's operations
 ;;;
-;;; As in `supersonic-jukebox.el', each operation the facade fires and
-;;; forgets is a plain function around an `aio-defun' that reports its
-;;; own failures, which would otherwise reject a promise nobody awaits.
-;;;
+
+;; As in `supersonic-jukebox.el', each operation the facade fires and
+;; forgets is a plain function around an `aio-defun' that reports its
+;; own failures, which would otherwise reject a promise nobody awaits.
 
 (aio-defun
  supersonic-upnp-status (key)

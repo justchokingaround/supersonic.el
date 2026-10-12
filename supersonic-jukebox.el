@@ -244,14 +244,14 @@ Never issues a request of its own -- see `supersonic-jukebox--poll'."
 ;;;
 ;;; The facade's start/enqueue/toggle-play/next operations
 ;;;
-;;; Each of these is a plain function fired and forgotten by the
-;;; facade -- see `supersonic-playback.el' -- so the actual async work
-;;; happens in an `aio-defun' helper wrapped in
-;;; `supersonic--with-async-error-handling', the same pattern
-;;; `supersonic-now-playing-fetch-and-render' uses for the same reason:
-;;; nothing here awaits the promise, so an error raised inside it would
-;;; otherwise reject a promise nobody is listening to and vanish.
-;;;
+
+;; Each of these is a plain function fired and forgotten by the
+;; facade -- see `supersonic-playback.el' -- so the actual async work
+;; happens in an `aio-defun' helper wrapped in
+;; `supersonic--with-async-error-handling', the same pattern
+;; `supersonic-now-playing-fetch-and-render' uses for the same reason:
+;; nothing here awaits the promise, so an error raised inside it would
+;; otherwise reject a promise nobody is listening to and vanish.
 
 (aio-defun
  supersonic-jukebox--start (ids) "Replace the jukebox playlist with IDS and start playing."
