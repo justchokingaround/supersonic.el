@@ -401,7 +401,7 @@ it could not be fetched."
  "Fetch cover art ID at SIZE once SEM hands out a slot.
 Callers create every fetch up front, so the semaphore -- not the number
 of entries -- is what decides how many requests are on the wire at once
-(see `supersonic-art-fetch-concurrency').  Failures are swallowed here
+\(see `supersonic-art-fetch-concurrency').  Failures are swallowed here
 rather than left to reject, so that a slot is always given back and one
 unreachable cover doesn't hold up the rest."
  (aio-await (aio-sem-wait sem)) (aio-await (aio-catch (supersonic--fetch-art id size))) (aio-sem-post sem))

@@ -297,11 +297,11 @@ track starting or ending."
 
 (aio-defun
  supersonic-queue-parse (entries)
- "Turn ENTRIES, as resolved by `supersonic-playback-queue', into
-tabulated-list entries.
-Looks up each entry's track through `supersonic-provider-track', unless
-the entry brings its `:track' along, concurrently (fired up front, below,
-before anything is awaited) and tolerates individual lookup failures
+ "Turn ENTRIES into tabulated-list entries.
+ENTRIES are as resolved by `supersonic-playback-queue'.  Looks up
+each entry's track through `supersonic-provider-track', unless the entry
+brings its `:track' along, concurrently (fired up front, below, before
+anything is awaited) and tolerates individual lookup failures
 via `aio-catch', falling back to the \"?\" placeholder row instead of
 aborting the whole render."
  (let* ((pending
@@ -958,11 +958,11 @@ again (see `supersonic-now-playing--waveform-requested')."
 
 (aio-defun
  supersonic-now-playing--show-position (buff)
- "Ask the active backend where it is and run
-`supersonic-now-playing-position-functions' with it.  The position
-line, the seekbar's played/unplayed split, and a waveform fetch that
-was skipped while nobody was looking at BUFF are the default three
-(see that variable); a customization can list more, or fewer."
+ "Ask the active backend for position and update BUFF accordingly.
+Run `supersonic-now-playing-position-functions' with the position.
+The position line, the seekbar's played/unplayed split, and a waveform
+fetch that was skipped while nobody was looking at BUFF are the default
+three \(see that variable); a customization can list more, or fewer."
  (let ((position (aio-await (supersonic-playback-status 'position))))
    (when (buffer-live-p buff)
      (with-current-buffer buff
