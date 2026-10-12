@@ -287,10 +287,10 @@ Each entry brings its `:track' along, as the poll found it."
 ;;;
 ;;; The facade's playing operations
 ;;;
-;;; Each is a plain function the facade fires and forgets, settling
-;;; the player and the connection before handing the work to an
-;;; `aio-defun' that reports its own errors, as the jukebox's do.
-;;;
+
+;; Each is a plain function the facade fires and forgets, settling
+;; the player and the connection before handing the work to an
+;; `aio-defun' that reports its own errors, as the jukebox's do.
 
 (aio-defun
  supersonic-music-assistant-player--run (target description command &optional args)

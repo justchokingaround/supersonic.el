@@ -31,6 +31,8 @@
 (require 'aio)
 (require 'svg)
 (require 'url-util)
+(require 'tabulated-list)
+(require 'text-property-search)
 (require 'supersonic-custom)
 (require 'supersonic-provider)
 ;; Only for `supersonic-waveform-bars'/`supersonic-waveform-svg-bars': the
@@ -40,6 +42,55 @@
 ;; this file otherwise knows nothing about waveforms, the same way that
 ;; one otherwise knows nothing about the now-playing buffer.
 (require 'supersonic-waveform)
+
+(defcustom supersonic-art-overlay-layers
+  (list #'supersonic-art-overlay-layer-art
+        #'supersonic-art-overlay-layer-scrim
+        #'supersonic-art-overlay-layer-waveform
+        #'supersonic-art-overlay-layer-text)
+  "Layers composited into `supersonic-art-overlay-propertize's SVG, in order.
+Each is called as (FUNCTION CTX), CTX being the shared layout context
+`supersonic-art-overlay--context' builds once per call -- geometry
+\(scrim height, text baseline, whether a waveform lane is reserved at
+all) is decided there from what is present in this list and passed in,
+not from where in the list a layer happens to sit, so reordering this
+list changes stacking without changing layout.  First in the list
+draws first, so ends up on the bottom; the default order -- art, then
+the scrim, then the waveform lane, then text -- is what always drew,
+before this existed to be configurable.
+
+Reordering this list moves a layer's position in the final image, e.g.
+listing `supersonic-art-overlay-layer-text' ahead of
+`supersonic-art-overlay-layer-waveform' to draw the waveform lane over
+the label rather than below it.  Dropping a layer removes it from the
+image entirely, including the room `supersonic-art-overlay-layer-scrim'
+would otherwise reserve for it -- see `supersonic-art-overlay--context'.
+Adding a function of your own -- a border, a gradient -- draws it
+alongside the rest, reading CTX's `:svg' and whichever other keys it
+needs.
+
+See `supersonic-art-overlay-scroll-layers' for the scrolling variant's
+counterpart, used instead whenever
+`supersonic-now-playing-animate-art-overlay-scroll' is the one drawing."
+  :type '(repeat function)
+  :group 'supersonic)
+
+(defcustom supersonic-art-overlay-scroll-layers
+  (list #'supersonic-art-overlay-layer-art
+        #'supersonic-art-overlay-layer-scrim
+        #'supersonic-art-overlay-layer-waveform
+        #'supersonic-art-overlay-layer-text-scroll)
+  "Layers composited into `supersonic-art-overlay-scroll-propertize's SVG.
+The scrolling variant of `supersonic-art-overlay-layers', used whenever
+`supersonic-now-playing-animate-art-overlay-scroll' is the one drawing
+rather than `supersonic-now-playing-animate-art-overlay' -- everything
+that variable's docstring says about reordering and dropping layers
+applies here identically, the one difference being the last entry:
+`supersonic-art-overlay-layer-text-scroll' instead of
+`-layer-text', which is the one layer function this list draws with
+that the other one has no equivalent of."
+  :type '(repeat function)
+  :group 'supersonic)
 
 (defun supersonic-art-available-p ()
   "Return non-nil if cover art can actually be shown right now.
@@ -65,9 +116,12 @@ otherwise coincide with this one (e.g. a track and its own cover art
 id) and collide on the same file name."
   (expand-file-name (format "art-%s-%d" (supersonic-provider-cache-name id) size) supersonic-cache-path))
 
-(defun supersonic-image-propertize (id size)
-  "Generate a property displaying cover art ID at SIZE pixels high."
-  (propertize " " 'display (create-image (supersonic-art-cache-file id size) nil nil :height size)))
+(defun supersonic-image-propertize (id size &optional max-width)
+  "Generate a property displaying cover art ID at SIZE pixels high.
+With MAX-WIDTH, an image wider than that many pixels at that height is
+scaled down further to fit, keeping its proportions."
+  (propertize " " 'display (apply #'create-image (supersonic-art-cache-file id size) nil nil :height size
+                                  (and max-width (list :max-width max-width)))))
 
 (defun supersonic-art-overlay-font-size (size)
   "Return the pixel font size the art overlay scrim's text is drawn at for SIZE.
@@ -396,7 +450,7 @@ it could not be fetched."
  "Fetch cover art ID at SIZE once SEM hands out a slot.
 Callers create every fetch up front, so the semaphore -- not the number
 of entries -- is what decides how many requests are on the wire at once
-(see `supersonic-art-fetch-concurrency').  Failures are swallowed here
+\(see `supersonic-art-fetch-concurrency').  Failures are swallowed here
 rather than left to reject, so that a slot is always given back and one
 unreachable cover doesn't hold up the rest."
  (aio-await (aio-sem-wait sem)) (aio-await (aio-catch (supersonic--fetch-art id size))) (aio-sem-post sem))
@@ -431,6 +485,155 @@ so callers don't need to print again themselves."
    (with-current-buffer buff
      (when (derived-mode-p 'tabulated-list-mode)
        (tabulated-list-print t)))))
+
+;;; Art filled in as rows come into view
+
+(defvar-local supersonic-art--lazy nil
+  "What `supersonic-art-fill-visible' fills into this buffer, or nil.
+A plist: `:column' and `:size' the art goes into and is shown at,
+`:arts' a table from each item's id to its `:art' reference, and
+`:requested' the ids whose art was asked for and not given up on.  A
+fresh plist for every fill, so a fetch can tell by `eq' whether the
+list it was started for is still the one shown.")
+
+(defvar-local supersonic-art--lazy-sem nil
+  "The semaphore this buffer's `supersonic-art-fill-visible' fetches share.
+Permanently local, so that neither a refresh nor the list being opened
+anew, which turns its mode on again, gives the fetches of the new list
+a second set of `supersonic-art-fetch-concurrency' slots next to the
+ones the old list's fetches still hold.  It is made with the value
+that setting has the first time; a new value takes a new buffer.")
+(put 'supersonic-art--lazy-sem 'permanent-local t)
+
+(defvar-local supersonic-art--lazy-timer nil
+  "The timer a scroll of this buffer set to ask for the art it brought in view.")
+
+(defun supersonic-art-fill-visible (items n size buff)
+  "Fill column N of BUFF's rows with ITEMS' art at SIZE as they come into view.
+ITEMS are the facade plists the rows were made from; each row is
+matched to its item by `:id', so the order of the rows, which sorting
+the list changes, does not matter.  Unlike `supersonic-get-images',
+which fetches the art of every entry up front, only the rows in view
+are fetched for, at most `supersonic-art-fetch-concurrency' at a time,
+and the rest follow as they are scrolled to -- for a list such as the
+artists, which holds the whole library.  A row scrolled away before
+its fetch got a slot is skipped, to be asked for again when it comes
+back.  Each row is redrawn on its own as its art arrives, at most SIZE
+pixels wide.  BUFF must already be printed."
+  (when (and (buffer-live-p buff) (supersonic-art-available-p))
+    (with-current-buffer buff
+      (let ((table (make-hash-table :test #'equal)))
+        (dolist (item items)
+          (when (plist-get item :art)
+            (puthash (plist-get item :id) (plist-get item :art) table)))
+        (setq supersonic-art--lazy
+              (list :column n :size size :arts table :requested (make-hash-table :test #'equal))))
+      (unless supersonic-art--lazy-sem
+        (setq supersonic-art--lazy-sem (aio-sem supersonic-art-fetch-concurrency)))
+      (add-hook 'window-scroll-functions #'supersonic-art--on-scroll nil t)
+      (add-hook 'post-command-hook #'supersonic-art--fill-windows nil t)
+      (supersonic-art--fill-windows))))
+
+(defun supersonic-art--on-scroll (_window _start)
+  "Ask for the art a scroll brought in view, once redisplay is done.
+On `window-scroll-functions', which runs in the middle of redisplay:
+art already cached would be drawn right away, and changing the height
+of the rows there would pull the ground from under the redisplay that
+just placed them."
+  (unless supersonic-art--lazy-timer
+    (let ((buff (current-buffer)))
+      (setq supersonic-art--lazy-timer
+            (run-at-time 0 nil (lambda ()
+                                 (when (buffer-live-p buff)
+                                   (with-current-buffer buff
+                                     (setq supersonic-art--lazy-timer nil)
+                                     (supersonic-art--fill-windows)))))))))
+
+(defun supersonic-art--in-view (window)
+  "Return the ids of the rows in view in WINDOW, top to bottom.
+Taken as many rows from `window-start' on as WINDOW has text lines,
+since `window-end' is not up to date before redisplay: too many when
+rows are art-high, never too few."
+  (with-current-buffer (window-buffer window)
+    (let ((ids nil))
+      (save-excursion
+        (goto-char (window-start window))
+        (dotimes (_ (window-body-height window))
+          (let ((id (tabulated-list-get-id)))
+            (when id (push id ids)))
+          (forward-line 1)))
+      (nreverse ids))))
+
+(defun supersonic-art--in-view-p (id)
+  "Return non-nil if the row of ID is in view in a window on the current buffer.
+In view as `supersonic-art--in-view' has it."
+  (seq-some (lambda (window) (member id (supersonic-art--in-view window)))
+            (get-buffer-window-list (current-buffer) nil t)))
+
+(defun supersonic-art--fill-windows ()
+  "Ask for the art of the rows in view in each window on the current buffer."
+  (when supersonic-art--lazy
+    (dolist (window (get-buffer-window-list (current-buffer) nil t))
+      (mapc #'supersonic-art--request (supersonic-art--in-view window)))))
+
+(defun supersonic-art--request (id)
+  "Start filling in the art of the row of ID, unless asked for already."
+  (let* ((lazy supersonic-art--lazy)
+         (art (gethash id (plist-get lazy :arts)))
+         (requested (plist-get lazy :requested)))
+    (when (and art (not (gethash id requested)))
+      (puthash id t requested)
+      (ignore (supersonic-art--fill-row (current-buffer) lazy id art)))))
+
+(defun supersonic-art--current-p (buff lazy)
+  "Return non-nil if BUFF is live and still filled under LAZY."
+  (and (buffer-live-p buff) (eq lazy (buffer-local-value 'supersonic-art--lazy buff))))
+
+(aio-defun
+ supersonic-art--fill-row (buff lazy id art)
+ "Fetch ART for the row of ID in BUFF, then redraw that row with it.
+LAZY is the `supersonic-art--lazy' the request was made under.  Art
+already cached is shown without waiting for a slot.  A request that
+gets its slot only after BUFF was refilled is dropped unfetched: it
+belongs to a list no longer shown, and the new one asks again for
+whatever is in view.  One whose row was scrolled away meanwhile is
+dropped too, and forgotten, so that it is asked for again when the
+row is back in view -- rather than holding up the rows in view now.
+Failures leave the row without art."
+ (let ((size (plist-get lazy :size)))
+   (unless (file-exists-p (supersonic-art-cache-file art size))
+     (let ((sem (buffer-local-value 'supersonic-art--lazy-sem buff)))
+       (aio-await (aio-sem-wait sem))
+       (when (supersonic-art--current-p buff lazy)
+         (if (with-current-buffer buff (supersonic-art--in-view-p id))
+             (aio-await (aio-catch (supersonic--fetch-art art size)))
+           (remhash id (plist-get lazy :requested))))
+       (aio-sem-post sem)))
+   (when (and (supersonic-art--current-p buff lazy)
+              (file-exists-p (supersonic-art-cache-file art size)))
+     (with-current-buffer buff
+       (supersonic-art--redraw-row id (plist-get lazy :column) (supersonic-image-propertize art size size))))))
+
+(defun supersonic-art--redraw-row (id n cell)
+  "Set column N of the entry ID to CELL and redraw just its row.
+Reprinting the whole list for every image that arrives would cost as
+much as the list is long, and `tabulated-list-set-col' cannot fill a
+cell printed empty, which leaves no text to replace.  Point, if on
+that row, keeps its column."
+  (let ((entry (assoc id tabulated-list-entries)))
+    (when entry
+      (aset (cadr entry) n cell)
+      (let ((column (and (equal id (tabulated-list-get-id)) (current-column))))
+        (save-excursion
+          (goto-char (point-min))
+          (let ((match (text-property-search-forward 'tabulated-list-id id t)))
+            (when match
+              (goto-char (prop-match-beginning match))
+              (let ((inhibit-read-only t))
+                (delete-region (line-beginning-position) (min (point-max) (1+ (line-end-position))))
+                (funcall tabulated-list-printer id (cadr entry))))))
+        (when column
+          (move-to-column column))))))
 
 (provide 'supersonic-art)
 ;;; supersonic-art.el ends here

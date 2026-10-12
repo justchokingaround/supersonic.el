@@ -474,7 +474,7 @@ point where what is playing may have changed runs
      (let* ((queue (supersonic-tests--resolve (supersonic-playback-queue)))
             (entries (aio-wait-for (supersonic-queue-parse queue))))
        (should (equal "▶" (aref (nth 1 (car entries)) 0)))
-       (should (equal "" (aref (nth 1 (cadr entries)) 0)))))))
+       (should (equal " " (aref (nth 1 (cadr entries)) 0)))))))
 
 (ert-deftest supersonic-tests-queue-parse-includes-song-metadata ()
   "`supersonic-queue-parse' fills in title, artist and album from the song lookup."
@@ -501,7 +501,7 @@ a lookup; one that does not is looked up as before."
                    (supersonic-queue-parse
                     '((:track-id "a" :current t :track (:id "a" :title "Brought" :artist "Ar" :album "Al"))
                       (:track-id "b" :current nil))))))
-        (should (equal '(["▶" "Brought" "Ar" "Al"] ["" "Looked up" "" ""]) (mapcar #'cadr rows)))
+        (should (equal '(["▶" "Brought" "Ar" "Al"] [" " "Looked up" "" ""]) (mapcar #'cadr rows)))
         (should (equal '("b") looked-up))))))
 
 (ert-deftest supersonic-tests-queue-buffer-follows-track-changes ()
@@ -1339,6 +1339,16 @@ existed."
           (should-not (file-exists-p cache-file)))
       (delete-directory supersonic-cache-path t))))
 
+(ert-deftest supersonic-tests-waveform-delete-file-logs-instead-of-signalling ()
+  "A temp or cache file that cannot be deleted is logged and left,
+rather than aborting the cleanup it is part of."
+  (cl-letf (((symbol-function 'delete-file)
+             (lambda (file &rest _) (signal 'file-error (list "Removing old name" "Permission denied" file)))))
+    (let ((inhibit-message t))
+      (supersonic-waveform--delete-file "/nowhere/waveform-x")
+      (with-current-buffer (messages-buffer)
+        (should (string-match-p "Could not delete /nowhere/waveform-x" (buffer-string)))))))
+
 (ert-deftest supersonic-tests-waveform-cancel-kills-in-flight-transcode ()
   "`supersonic-waveform-cancel' kills the transcode process and forgets
 its output file, so a quick track change never leaves either behind."
@@ -1350,10 +1360,13 @@ its output file, so a quick track change never leaves either behind."
            (progn
              (supersonic-waveform-ensure "long-track" #'ignore)
              (should (supersonic-tests--wait-for (lambda () (process-live-p supersonic-waveform--process))))
+             (should (memq #'supersonic-waveform-cancel kill-emacs-hook))
              (let ((outfile supersonic-waveform--outfile))
                (supersonic-waveform-cancel)
                (should-not (process-live-p supersonic-waveform--process))
-               (should-not (and outfile (file-exists-p outfile)))))
+               (should-not (and outfile (file-exists-p outfile))))
+             ;; Nothing left for `kill-emacs-hook' to clean up.
+             (should-not (memq #'supersonic-waveform-cancel kill-emacs-hook)))
          (delete-directory supersonic-cache-path t))))))
 
 (ert-deftest supersonic-tests-waveform-cancel-does-not-log-a-failure-message ()
@@ -2797,6 +2810,51 @@ function kept, for a password that has just been changed."
       (funcall cached "a")
       (should (= 2 asked)))))
 
+(ert-deftest supersonic-tests-saved-cached-option-loads ()
+  "A value saved with `custom-set-variables' that calls the autoloaded
+`supersonic-cached' is evaluated while the file defining its option
+loads; reaching `supersonic-cached' must not require that file again
+\(\"Recursive `require'\").  In a fresh Emacs with only the autoloads."
+  (let* ((dir (make-temp-file "supersonic-package" t))
+         (aio-dir (file-name-directory (locate-library "aio")))
+         (loaddefs (expand-file-name "supersonic-autoloads.el" dir))
+         (form
+          `(progn
+             (load ,loaddefs nil t)
+             (custom-set-variables
+              '(supersonic-auth-function
+                (supersonic-cached (lambda (_host) (list :user "u" :secret "s"))))
+              '(supersonic-music-assistant-token-function
+                (supersonic-cached (lambda (_server) "token"))))
+             (require 'supersonic)
+             (require 'supersonic-music-assistant)
+             (princ
+              (prin1-to-string
+               (list (funcall supersonic-auth-function "host")
+                     (funcall supersonic-music-assistant-token-function "server")))))))
+    (unwind-protect
+        (with-temp-buffer
+          ;; A copy, as the package is installed: the autoloads land
+          ;; next to the files rather than in the source tree.
+          (dolist (file (supersonic-tests--package-files))
+            (copy-file file (file-name-as-directory dir)))
+          (if (fboundp 'loaddefs-generate)
+              (loaddefs-generate dir loaddefs)
+            ;; Emacs 28, before `loaddefs-generate' replaced it.
+            (with-no-warnings (make-directory-autoloads dir loaddefs)))
+          (should
+           (eq 0
+               (call-process
+                (expand-file-name invocation-name invocation-directory)
+                nil
+                '(t nil)
+                nil
+                "-Q" "--batch" "-L" dir "-L" aio-dir
+                "--eval" (prin1-to-string form))))
+          (should (equal '((:user "u" :secret "s") "token")
+                         (car (read-from-string (buffer-string))))))
+      (delete-directory dir t))))
+
 (ert-deftest supersonic-tests-cached-keeps-only-user-and-secret ()
   "Of the credentials found, only the user and the secret are kept --
 not everything else an auth-source entry carries, its notes included."
@@ -2918,14 +2976,14 @@ the endpoint that was asked."
   "The Subsonic provider flattens every letter bucket of getArtists'
 \"index\" array into a single list of artists, in bucket order, covering
 every bucket rather than just the first -- and the artists buffer turns
-those into one (id [name]) row apiece."
+those into one (id [name art]) row apiece."
   (let* ((data
           '(("subsonic-response" ("artists" ("index"
                (("artist" (("id" . "1") ("name" . "Alice")) (("id" . "2") ("name" . "Bob"))))
                (("artist" (("id" . "3") ("name" . "Carl")))))))))
          (artists (supersonic-subsonic--artists-from data)))
     (should (equal '((:id "1" :name "Alice") (:id "2" :name "Bob") (:id "3" :name "Carl")) artists))
-    (should (equal '(("1" ["Alice"]) ("2" ["Bob"]) ("3" ["Carl"])) (supersonic-artists-rows artists)))))
+    (should (equal '(("1" ["Alice" ""]) ("2" ["Bob" ""]) ("3" ["Carl" ""])) (supersonic-artists-rows artists)))))
 
 (ert-deftest supersonic-tests-albums-buffer-becomes-current ()
   "`supersonic-albums' leaves the freshly created album-list buffer as
@@ -3486,33 +3544,81 @@ particular backend."
      (lambda (f) (equal (file-name-nondirectory f) "supersonic-tests.el"))
      (directory-files dir t "\\`supersonic.*\\.el\\'"))))
 
-(ert-deftest supersonic-tests-user-options-all-live-in-one-file ()
-  "Every `defcustom' in the package belongs to `supersonic-custom.el'.
+(defun supersonic-tests--file-forms (file)
+  "Return the top-level forms of FILE, read in order."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (let ((forms nil))
+      (condition-case nil
+          (while t
+            (push (read (current-buffer)) forms))
+        (end-of-file nil))
+      (nreverse forms))))
+
+(defun supersonic-tests--quoted-functions (form)
+  "Return the symbols FORM quotes with #\\=', anywhere inside it."
+  (cond ((and (eq (car-safe form) 'function) (symbolp (cadr form)))
+         (list (cadr form)))
+        ((consp form)
+         (append (supersonic-tests--quoted-functions (car form))
+                 (supersonic-tests--quoted-functions (cdr form))))))
+
+(ert-deftest supersonic-tests-user-options-live-in-the-options-file ()
+  "Every `defcustom' belongs to `supersonic-custom.el', unless its default
+is a function of the package -- that one lives in the file defining the
+function.
 Several options are read by more than one file -- `supersonic-cache-path'
 by both caches, `supersonic-mpv' by both the playback backend and the
 waveform transcoder that is otherwise independent of it -- so there is
 no natural owner to move them to.  Keeping them together is what lets
 every other file simply require them, instead of carrying `defvar'
 stubs that keep the byte-compiler quiet while leaving the options
-genuinely void for anyone who requires that file on its own."
+genuinely void for anyone who requires that file on its own.  An
+option defaulting to a function of the package has an owner: the file
+defining the function, which is also the one reading it.  Defining it
+anywhere else would make that file refer to one requiring it -- see
+`supersonic-tests-options-file-refers-to-nothing-of-the-package'.
+
+`supersonic-credentials.el' keeps its one option to itself, as it
+must load without `supersonic-custom.el' -- see its Commentary."
   (dolist (file (supersonic-tests--package-files))
     (let ((name (file-name-nondirectory file)))
-      (unless (equal name "supersonic-custom.el")
-        (with-temp-buffer
-          (insert-file-contents file)
-          (goto-char (point-min))
-          (should-not
-           (and (re-search-forward "^(defcustom " nil t)
-                (format "%s defines a user option outside supersonic-custom.el" name))))))))
+      (unless (member name '("supersonic-custom.el" "supersonic-credentials.el"))
+        (let* ((forms (supersonic-tests--file-forms file))
+               (defined (mapcar #'cadr
+                                (seq-filter (lambda (form)
+                                              (memq (car-safe form) '(defun aio-defun cl-defun)))
+                                            forms))))
+          (dolist (form forms)
+            (when (eq (car-safe form) 'defcustom)
+              (let ((own (seq-filter (lambda (f) (memq f defined))
+                                     (supersonic-tests--quoted-functions (nth 2 form)))))
+                (should-not
+                 (and (null own)
+                      (format "%s defines `%s' outside supersonic-custom.el, though its default is no function of that file"
+                              name (cadr form))))))))))))
+
+(ert-deftest supersonic-tests-options-file-refers-to-nothing-of-the-package ()
+  "`supersonic-custom.el' names no function of the package.
+Every other file requires it, so a function of theirs it named --
+even just as a default, behind a `declare-function' -- would be a
+dependency running back the other way."
+  (let ((forms (supersonic-tests--file-forms
+                (expand-file-name "supersonic-custom.el"
+                                  (file-name-directory (locate-library "supersonic"))))))
+    (should-not (seq-find (lambda (form) (eq (car-safe form) 'declare-function)) forms))
+    (should-not (seq-filter (lambda (f) (string-prefix-p "supersonic-" (symbol-name f)))
+                            (supersonic-tests--quoted-functions forms)))))
 
 (ert-deftest supersonic-tests-every-file-requires-the-options-file ()
   "Each file requires `supersonic-custom' rather than assuming a load order.
-See `supersonic-tests-user-options-all-live-in-one-file' for why this
+See `supersonic-tests-user-options-live-in-the-options-file' for why this
 matters -- without it, requiring e.g. just `supersonic-waveform' left
-`supersonic-waveform-buckets' void."
+`supersonic-waveform-buckets' void.  Except `supersonic-credentials',
+which must not require it -- see its Commentary."
   (dolist (file (supersonic-tests--package-files))
     (let ((name (file-name-nondirectory file)))
-      (unless (equal name "supersonic-custom.el")
+      (unless (member name '("supersonic-custom.el" "supersonic-credentials.el"))
         (with-temp-buffer
           (insert-file-contents file)
           (goto-char (point-min))
@@ -3753,8 +3859,86 @@ every consumer re-read the queue."
   "Both buffers showing the play queue -- the queue buffer itself and
 now-playing's \"Queue: N/M\" row -- refresh on
 `supersonic-playback-queue-change-hook', not only on a track change."
-  (should (memq #'supersonic-queue-maybe-refresh supersonic-playback-queue-change-hook))
-  (should (memq #'supersonic-now-playing-maybe-refresh supersonic-playback-queue-change-hook)))
+  (let ((buff (generate-new-buffer " *supersonic-tests-queue*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer buff
+            (supersonic-queue-mode))
+          (should (memq #'supersonic-queue-maybe-refresh supersonic-playback-queue-change-hook))
+          (should (memq #'supersonic-now-playing-maybe-refresh supersonic-playback-queue-change-hook)))
+      (kill-buffer buff))))
+
+(ert-deftest supersonic-tests-playback-hooks-live-only-as-long-as-their-buffers ()
+  "Loading supersonic adds no hooks (MELPA review, issue #103): the
+`supersonic--playback-hooks' entries go on when a play queue or
+now-playing buffer is set up, and come off once the last of them is
+killed -- not before."
+  (skip-unless
+   (not (seq-some
+         (lambda (b)
+           (with-current-buffer b
+             (derived-mode-p 'supersonic-queue-mode 'supersonic-now-playing-mode)))
+         (buffer-list))))
+  (cl-flet ((hooked-p
+             ()
+             (seq-every-p
+              (lambda (entry) (memq (cdr entry) (symbol-value (car entry))))
+              supersonic--playback-hooks))
+            (unhooked-p
+             ()
+             (seq-every-p
+              (lambda (entry) (not (memq (cdr entry) (symbol-value (car entry)))))
+              supersonic--playback-hooks)))
+    (supersonic--remove-playback-hooks)
+    (let ((queue (generate-new-buffer " *supersonic-tests-queue*"))
+          (now-playing (generate-new-buffer " *supersonic-tests-now-playing*")))
+      (unwind-protect
+          (progn
+            (should (unhooked-p))
+            (with-current-buffer queue
+              (supersonic-queue-mode))
+            (should (hooked-p))
+            (with-current-buffer now-playing
+              (supersonic-now-playing-mode))
+            (should (hooked-p))
+            ;; The now-playing buffer still needs them.
+            (kill-buffer queue)
+            (should (hooked-p))
+            (kill-buffer now-playing)
+            (should (unhooked-p)))
+        (when (buffer-live-p queue)
+          (kill-buffer queue))
+        (when (buffer-live-p now-playing)
+          (kill-buffer now-playing))))))
+
+(ert-deftest supersonic-tests-loading-adds-no-hooks ()
+  "Loading every supersonic file in a fresh Emacs leaves
+`kill-emacs-hook' and the `supersonic-playback.el' hooks untouched."
+  (let* ((dir (file-name-directory (locate-library "supersonic")))
+         (aio-dir (file-name-directory (locate-library "aio")))
+         (form
+          `(progn
+             (require 'supersonic)
+             (require 'supersonic-waveform)
+             (princ
+              (prin1-to-string
+               (list
+                (memq #'supersonic-waveform-cancel kill-emacs-hook)
+                supersonic-playback-track-change-hook
+                supersonic-playback-queue-change-hook
+                supersonic-playback-state-change-hook
+                supersonic-playback-position-change-hook))))))
+    (with-temp-buffer
+      (should
+       (eq 0
+           (call-process
+            (expand-file-name invocation-name invocation-directory)
+            nil
+            '(t nil)
+            nil
+            "-Q" "--batch" "-L" dir "-L" aio-dir
+            "--eval" (prin1-to-string form))))
+      (should (equal '(nil nil nil nil nil) (car (read-from-string (buffer-string))))))))
 
 (ert-deftest supersonic-tests-jukebox-poll-scrobbles-old-and-new-track-on-change ()
   "A poll that finds the current track id changed scrobbles the previous
@@ -4391,6 +4575,18 @@ provider just to check the active one."
       (should-not (featurep 'supersonic-tests-lazy-provider))
       (should (supersonic-provider-registered-p 'lazy)))))
 
+(ert-deftest supersonic-tests-provider-failing-hooks-are-logged-not-raised ()
+  "A provider whose `cache-namespace' or `config-hints' signals still
+gets a cache name and no hints: one is asked while rendering, the other
+while reporting another failure, and neither may raise its own."
+  (let ((unnamespaced (supersonic-tests--with-provider `((cache-namespace . ,(lambda () "")))
+                        (supersonic-provider-cache-name "al-1"))))
+    (supersonic-tests--with-provider `((cache-namespace . ,(lambda () (error "Boom")))
+                                       (config-hints . ,(lambda () (error "Boom"))))
+      (let ((inhibit-message t))
+        (should (equal unnamespaced (supersonic-provider-cache-name "al-1")))
+        (should-not (supersonic-provider-config-hints))))))
+
 (ert-deftest supersonic-tests-provider-album-list-rejects-unknown-types ()
   "`supersonic-provider-album-list' only passes on the types it documents."
   (supersonic-tests--with-provider supersonic-tests--fake-library
@@ -4483,7 +4679,7 @@ any Subsonic request being made."
         (unwind-protect
             (with-current-buffer buff
               (aio-wait-for (supersonic-artists-refresh buff))
-              (should (equal '(("ar/1" ["Alice"]) ("ar/2" ["Bob"])) tabulated-list-entries))
+              (should (equal '(("ar/1" ["Alice" ""]) ("ar/2" ["Bob" ""])) tabulated-list-entries))
               (aio-wait-for (supersonic-albums-refresh "ar/1" buff))
               (should (equal '("ar/1/al-1" "ar/1/al-2") (mapcar #'car tabulated-list-entries)))
               (should (equal "1999" (aref (cadr (car tabulated-list-entries)) 0)))
@@ -4500,6 +4696,109 @@ any Subsonic request being made."
                                (("ar/1/al-1/01.flac" . "song") ["Song" "One"]))
                              tabulated-list-entries)))
           (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-fit-column-widths-fits-every-column-but-the-last ()
+  "Each column but the last is as wide as its widest cell, never narrower
+than its header (plus the sort indicator when sortable); the last
+keeps the width set aside for it."
+  (let ((tabulated-list-padding 2))
+    (should (equal [("" 1 nil) ("Title" 25 t) ("Album" 25 t)]
+                   (supersonic--fit-column-widths
+                    [("" 2 nil) ("Title" 40 t) ("Album" 25 t)]
+                    '((a ["▶" "A rather long track title" "x"]) (b ["" "Short" "y"]))
+                    nil)))
+    (should (equal [("Year" 6 t) ("Albums" 8 t) ("Art" 30 nil)]
+                   (supersonic--fit-column-widths
+                    [("Year" 5 t) ("Albums" 40 t) ("Art" 30 nil)]
+                    '((a ["1999" "Abc" ""]))
+                    nil)))
+    (should (equal [("Artist" 30 t)]
+                   (supersonic--fit-column-widths [("Artist" 30 t)] '((a ["Somebody"])) nil)))))
+
+(ert-deftest supersonic-tests-fit-column-widths-gives-way-to-the-window ()
+  "A row too wide for the window shrinks its widest columns first, but
+never below their minimum."
+  (let ((tabulated-list-padding 2)
+        (format [("Albums" 30 t) ("Artists" 30 t) ("Art" 10 nil)])
+        (entries `((a [,(make-string 50 ?a) ,(make-string 20 ?b) ""]))))
+    ;; 2 padding + 2 separators + 10 for art leave 46 of 60.
+    (should (equal [("Albums" 26 t) ("Artists" 20 t) ("Art" 10 nil)]
+                   (supersonic--fit-column-widths format entries 60)))
+    ;; 2 + 2 + 10 leave 26: both give way, the wider first.
+    (should (equal [("Albums" 13 t) ("Artists" 13 t) ("Art" 10 nil)]
+                   (supersonic--fit-column-widths format entries 40)))
+    (should (equal [("Albums" 8 t) ("Artists" 9 t) ("Art" 10 nil)]
+                   (supersonic--fit-column-widths format entries 10)))))
+
+(ert-deftest supersonic-tests-print-list-fits-the-columns-it-prints ()
+  "Rendering a list fits its columns afresh each time, leaving the mode's
+own format alone for the next buffer to start from."
+  (with-temp-buffer
+    (supersonic-tracks-mode)
+    (let ((declared tabulated-list-format))
+      (supersonic--print-list '((a ["A title of thirty-four characters!" "1:05" "1"])))
+      (should (equal '("Title" 34 t) (aref tabulated-list-format 0)))
+      (supersonic--print-list '((a ["Short" "1:05" "1"])))
+      (should (equal '("Title" 7 t) (aref tabulated-list-format 0)))
+      (should (equal '("Title" 30 t) (aref declared 0)))
+      (goto-char (point-min))
+      (should (search-forward "Short" nil t)))))
+
+(ert-deftest supersonic-tests-fit-column-widths-measures-cells-as-drawn ()
+  "MEASURE decides a cell's width, so text drawn twice as wide, as in a
+face of height 2.0, gets twice the columns."
+  (let ((tabulated-list-padding 2))
+    (should (equal [("Albums" 20 t) ("Art" 30 nil)]
+                   (supersonic--fit-column-widths
+                    [("Albums" 40 t) ("Art" 30 nil)] '((a ["Ten chars!" ""]))
+                    nil (lambda (cell) (* 2 (supersonic--cell-width cell))))))))
+
+(ert-deftest supersonic-tests-truncate-to-pixels-keeps-what-fits ()
+  "A cell cut down to its pixels ends in an ellipsis in its own face.
+A batch frame counts a column as a pixel."
+  (let* ((truncate-string-ellipsis "…")
+         (cut (supersonic--truncate-to-pixels (propertize "abcdefghij" 'face 'bold) 5)))
+    (should (equal "abcd…" (substring-no-properties cut)))
+    (should (eq 'bold (get-text-property 4 'face cut)))))
+
+(ert-deftest supersonic-tests-fit-columns-cuts-only-what-is-drawn ()
+  "Too narrow a window draws cells cut down to their column, while the
+entries keep them whole: sorting compares the whole text, and a refit
+in a wider window draws it all again."
+  (with-temp-buffer
+    (supersonic-tracks-mode)
+    (let ((truncate-string-ellipsis "…")
+          (first (concat (make-string 40 ?t) " first"))
+          (second (concat (make-string 40 ?t) " second")))
+      (cl-letf (((symbol-function 'supersonic--window-columns) (lambda () 30)))
+        (supersonic--print-list `((b [,second "1:05" "2"]) (a [,first "1:05" "1"])))
+        ;; 2 padding + 2 separators + 10 for the track number leave 16: both columns stop at their minimum.
+        (should (equal '("Title" 7 t) (aref tabulated-list-format 0)))
+        (should (equal second (aref (cadr (car tabulated-list-entries)) 0)))
+        ;; Before Emacs 29 `tabulated-list-print' does all the cutting itself, by hiding the rest of the cell behind
+        ;; a `display' ellipsis rather than leaving it out.
+        (when (supersonic--pixelwise-p)
+          (goto-char (point-min))
+          (should (search-forward "tttttt…" nil t))
+          (should-not (search-forward "second" nil t))
+          (should (equal second (aref (tabulated-list-get-entry (pos-bol)) 0))))
+        (setq tabulated-list-sort-key '("Title" . nil))
+        (tabulated-list-print)
+        (should (equal '(a b) (mapcar #'car tabulated-list-entries))))
+      (cl-letf (((symbol-function 'supersonic--window-columns) (lambda () 200)))
+        (revert-buffer)
+        (should (equal '("Title" 47 t) (aref tabulated-list-format 0)))
+        (goto-char (point-min))
+        (should (search-forward second nil t))))))
+
+(ert-deftest supersonic-tests-reverting-a-list-refits-its-columns ()
+  "\\[revert-buffer] in a list buffer that keeps the default
+`tabulated-list-revert' refits the columns to the entries it reprints."
+  (with-temp-buffer
+    (supersonic-search-mode)
+    (setq tabulated-list-entries '((a ["Song" "A name of twenty chars"])))
+    (revert-buffer)
+    (should (equal '("Type" 6 t) (aref tabulated-list-format 0)))))
 
 (ert-deftest supersonic-tests-provider-ids-reach-playback-untouched ()
   "Playing from the tracks and search buffers, and enqueueing an album,
@@ -4673,11 +4972,11 @@ placeholder row instead of failing the whole queue."
           `((track . ,(supersonic-tests--track-lookup
                        '((:id "ar/1/al-1/01.flac" :title "One" :artist "Alice" :album "First")))))
         (should (equal '(("ar/1/al-1/01.flac" ["▶" "One" "Alice" "First"])
-                         ("gone.flac" ["" "?" "" ""]))
+                         ("gone.flac" [" " "?" "" ""]))
                        (aio-wait-for (supersonic-queue-parse entries)))))
       (supersonic-tests--with-provider `((artists . ,(supersonic-tests--resolved nil)))
         (should (equal '(("ar/1/al-1/01.flac" ["▶" "?" "" ""])
-                         ("gone.flac" ["" "?" "" ""]))
+                         ("gone.flac" [" " "?" "" ""]))
                        (aio-wait-for (supersonic-queue-parse entries))))))))
 
 (defmacro supersonic-tests--with-playing (track-id &rest body)
@@ -6627,6 +6926,154 @@ not by its id, and an item without one simply gets no art."
       (kill-buffer buff)
       (delete-directory supersonic-cache-path t))))
 
+;; The artist list holds the whole library: its art comes in as rows are
+;; scrolled to, not all of it up front.
+(defmacro supersonic-tests--with-artist-list (count &rest body)
+  "Run BODY in an artist list of COUNT artists shown in the selected window.
+Every artist but the second has art \"art-N\"; REQUESTS, bound for
+BODY, collects each (ART . SIZE) the provider was asked for, newest
+first.  Art is drawn as \"ART:\" plus its reference."
+  (declare (indent 1))
+  `(let ((supersonic-cache-path (make-temp-file "supersonic-tests-cache-" t))
+         (supersonic-enable-art t)
+         (supersonic-artist-art-size 64)
+         (requests nil)
+         (buff (generate-new-buffer "*supersonic-tests-artists*"))
+         (artists (mapcar (lambda (i)
+                            (append (list :id (format "ar-%d" i) :name (format "Artist %d" i))
+                                    (unless (= i 2) (list :art (format "art-%d" i)))))
+                          (number-sequence 1 ,count))))
+     (unwind-protect
+         (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t))
+                   ((symbol-function 'supersonic-image-propertize) (lambda (art _size &rest _) (concat "ART:" art))))
+           (supersonic-tests--with-provider
+               `((cover-art . ,(supersonic-tests--cover-art (lambda (r) (push r requests))))
+                 (artists . ,(lambda () (funcall (supersonic-tests--resolved artists)))))
+             (save-window-excursion
+               (supersonic--init-list-buffer buff #'supersonic-artist-mode "Loading artists...")
+               (set-window-buffer (selected-window) buff)
+               (with-current-buffer buff
+                 ,@body))))
+       (kill-buffer buff)
+       (delete-directory supersonic-cache-path t))))
+
+(defun supersonic-tests--artist-cell (id)
+  "Return the Art cell of the artist ID in the current artist list."
+  (aref (cadr (assoc id tabulated-list-entries)) 1))
+
+(ert-deftest supersonic-tests-artist-art-is-fetched-for-the-rows-in-view ()
+  "The artist list fetches art at `supersonic-artist-art-size' for the
+rows its window shows, not for the whole library, and draws each row
+in place as its art arrives; an artist without art is left without.
+The rest follows as the window scrolls to it."
+  (supersonic-tests--with-artist-list 500
+    (aio-wait-for (supersonic-artists-refresh buff))
+    (should (supersonic-tests--wait-for (lambda () (equal "ART:art-1" (supersonic-tests--artist-cell "ar-1")))))
+    (should (equal "" (supersonic-tests--artist-cell "ar-2")))
+    (should (string-match-p "Artist 1 *ART:art-1$" (buffer-string)))
+    (should (= 64 (cdar requests)))
+    (let ((first-screen (length requests)))
+      (should (< 0 first-screen (window-body-height)))
+      (should-not (assoc "art-400" requests))
+      (goto-char (point-min))
+      (forward-line 399)
+      (set-window-start (selected-window) (point))
+      (supersonic-art--fill-windows)
+      (should (supersonic-tests--wait-for (lambda () (equal "ART:art-400" (supersonic-tests--artist-cell "ar-400")))))
+      (should (< (length requests) (* 2 (window-body-height))))
+      (should (equal (length requests) (length (delete-dups (mapcar #'car requests)))))
+      (should (string-match-p "ART:art-1$" (supersonic-tests--artist-cell "ar-1"))))))
+
+(ert-deftest supersonic-tests-artist-art-refresh-drops-the-old-lists-requests ()
+  "Refreshing the artist list while art is still coming in starts over
+for the new list: requests of the old one that have not got a slot yet
+are dropped rather than fetched, so a refresh never piles a second set
+of fetches onto the first."
+  (supersonic-tests--with-artist-list 500
+    (let ((supersonic-art-fetch-concurrency 1))
+      (setq supersonic-art--lazy-sem nil)
+      (aio-wait-for (supersonic-artists-refresh buff))
+      (aio-wait-for (supersonic-artists-refresh buff))
+      (should (supersonic-tests--wait-for (lambda () (equal "ART:art-1" (supersonic-tests--artist-cell "ar-1")))))
+      (should (supersonic-tests--wait-for
+               (lambda () (equal "ART:art-3" (supersonic-tests--artist-cell "ar-3")))))
+      (sleep-for 0.2)
+      (should (equal (length requests) (length (delete-dups (mapcar #'car requests))))))))
+
+(ert-deftest supersonic-tests-artist-art-size-nil-leaves-the-list-without-art ()
+  "With `supersonic-artist-art-size' nil the artist list has no Art
+column and asks for no art at all."
+  (supersonic-tests--with-artist-list 5
+    (let ((supersonic-artist-art-size nil))
+      (supersonic-artist-mode)
+      (should (equal [("Artist" 30 t)] tabulated-list-format))
+      (aio-wait-for (supersonic-artists-refresh buff))
+      (sleep-for 0.1)
+      (should (string-match-p "Artist 1$" (buffer-string)))
+      (should-not requests))))
+
+(ert-deftest supersonic-tests-artist-art-follows-the-rows-through-sorting ()
+  "Each artist gets its own art also when the list is sorted otherwise
+than the provider ordered it, as a refresh keeps the sort the user
+picked: rows are matched to their art by id, not by position."
+  (supersonic-tests--with-artist-list 5
+    (setq tabulated-list-sort-key '("Artist" . t))
+    (aio-wait-for (supersonic-artists-refresh buff))
+    (should (equal "ar-5" (caar tabulated-list-entries)))
+    (should (supersonic-tests--wait-for (lambda () (equal "ART:art-5" (supersonic-tests--artist-cell "ar-5")))))
+    (dolist (i '(1 3 4 5))
+      (should (equal (format "ART:art-%d" i) (supersonic-tests--artist-cell (format "ar-%d" i)))))
+    (should (equal "" (supersonic-tests--artist-cell "ar-2")))))
+
+(ert-deftest supersonic-tests-artist-list-has-no-art-column-without-art ()
+  "Where art cannot be shown, e.g. in a terminal, the artist list has no
+Art column, which would only take room from the names."
+  (supersonic-tests--with-artist-list 3
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) nil)))
+      (supersonic-artist-mode)
+      (should (equal [("Artist" 30 t)] tabulated-list-format))
+      (aio-wait-for (supersonic-artists-refresh buff))
+      (sleep-for 0.1)
+      (should-not requests))))
+
+(ert-deftest supersonic-tests-artist-art-skips-rows-scrolled-away ()
+  "A row scrolled out of view before its fetch got a slot is not fetched
+-- the rows now in view are not kept waiting behind it -- and is asked
+for again once it is back in view."
+  (supersonic-tests--with-artist-list 500
+    (let ((supersonic-art-fetch-concurrency 1))
+      (setq supersonic-art--lazy-sem nil)
+      (aio-wait-for (supersonic-artists-refresh buff))
+      (goto-char (point-min))
+      (forward-line 399)
+      (set-window-start (selected-window) (point))
+      (supersonic-art--fill-windows)
+      (should (supersonic-tests--wait-for (lambda () (equal "ART:art-400" (supersonic-tests--artist-cell "ar-400")))))
+      (sleep-for 0.2)
+      (should (<= (seq-count (lambda (r) (< (string-to-number (substring (car r) 4)) 100)) requests) 1))
+      (set-window-start (selected-window) (point-min))
+      (goto-char (point-min))
+      (supersonic-art--fill-windows)
+      (should (supersonic-tests--wait-for (lambda () (equal "ART:art-5" (supersonic-tests--artist-cell "ar-5"))))))))
+
+(ert-deftest supersonic-tests-artist-art-keeps-point-on-its-row ()
+  "Redrawing a row as its art arrives leaves point where it was in it."
+  (supersonic-tests--with-artist-list 5
+    (aio-wait-for (supersonic-artists-refresh buff))
+    (should (supersonic-tests--wait-for (lambda () (equal "ART:art-5" (supersonic-tests--artist-cell "ar-5")))))
+    (setq supersonic-art--lazy nil)
+    (dolist (entry tabulated-list-entries) (aset (cadr entry) 1 ""))
+    (tabulated-list-print t)
+    (goto-char (point-min))
+    (while (not (equal "ar-3" (tabulated-list-get-id))) (forward-line 1))
+    (move-to-column 5)
+    (let ((line (line-number-at-pos)))
+      (supersonic-art-fill-visible
+       (mapcar (lambda (i) (list :id (format "ar-%d" i) :art (format "art-%d" i))) '(1 2 3 4 5)) 1 64 buff)
+      (should (equal "ART:art-3" (supersonic-tests--artist-cell "ar-3")))
+      (should (= line (line-number-at-pos)))
+      (should (= 5 (current-column))))))
+
 (ert-deftest supersonic-tests-no-cover-art-means-no-art-and-no-error ()
   "With a provider that has no `cover-art', lists and now-playing render
 without art -- nothing is fetched, nothing fails."
@@ -7579,7 +8026,9 @@ the position ahead."
                   supersonic-music-assistant--clock-offset)))
       (should (< 119 (answer (format "date: %s\r\n" (format-time-string "%a, %d %b %Y %T GMT" (- now 120) t))) 122))
       (should (< 119 (answer "") 122))
-      (should (= 0 (answer (format "Date: %s\r\n" (format-time-string "%a, %d %b %Y %T GMT" now t)))))))
+      (should (= 0 (answer (format "Date: %s\r\n" (format-time-string "%a, %d %b %Y %T GMT" now t)))))
+      (setq supersonic-music-assistant--clock-offset 42)
+      (should (= 42 (answer "Date: not a date at all\r\n")))))
   (supersonic-tests--with-ma-player
     (setq supersonic-music-assistant--clock-offset 60)
     (supersonic-tests--ma-set-queue "playing" '("library://track/1") 0

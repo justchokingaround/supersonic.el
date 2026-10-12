@@ -90,6 +90,31 @@
 (require 'supersonic-api)
 (require 'supersonic-provider)
 
+(defcustom supersonic-music-assistant-token-function
+  #'supersonic-music-assistant-auth-source-token
+  "Function returning the token for the Music Assistant server.
+Called with the server, `supersonic-music-assistant-url', once as an
+operation starts, it returns the token, a function returning it, or
+nil if it has none.  The default looks the server up in auth-source.
+
+For a token kept where auth-source cannot find it by host, such as a
+pass entry named for something else:
+
+  (setq supersonic-music-assistant-token-function
+        (lambda (_server) (auth-source-pass-get \='secret \"my/entry\")))
+
+Polling the player's state is an operation too, so while
+`music-assistant' is the backend this is called every
+`supersonic-music-assistant-poll-interval' seconds.  A slow lookup,
+as decrypting that entry is, should be wrapped in `supersonic-cached':
+
+  (setq supersonic-music-assistant-token-function
+        (supersonic-cached
+         (lambda (_server) (auth-source-pass-get \='secret \"my/entry\"))))"
+  :type '(choice (function-item supersonic-music-assistant-auth-source-token)
+                 (function :tag "Other function"))
+  :group 'supersonic)
+
 (defvar url-http-end-of-headers)
 (defvar url-http-response-status)
 
@@ -285,7 +310,15 @@ readable `Date' leaves the estimate as it was."
                      (let ((case-fold-search t))
                        (and (re-search-forward "^Date:[ \t]*\\([^\r\n]+\\)" nil t)
                             (match-string 1))))))
-         (date (and header (ignore-errors (date-to-time header)))))
+         ;; `date-to-time' signals a plain `error' ("Invalid date") on
+         ;; a header it cannot parse, which is no reason to fail the
+         ;; request it came with.
+         (date (and header
+                    (condition-case nil
+                        (date-to-time header)
+                      (error
+                       (supersonic--log "Unreadable Date header: %s" header)
+                       nil)))))
     (when date
       (let ((offset (- (float-time) (float-time date))))
         (setq supersonic-music-assistant--clock-offset (if (> (abs offset) 2) offset 0))))))
