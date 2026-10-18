@@ -292,17 +292,16 @@ Synchronous, unlike `supersonic-playback-status': every backend knows
 this locally, so it can serve as a plain guard."
   (supersonic-playback--call 'live-p))
 
-(aio-defun
- supersonic-playback-status (key)
- "Return a promise resolving to the active backend's current KEY.
+(aio-defun supersonic-playback-status (key)
+  "Return a promise resolving to the active backend's current KEY.
 KEY is one of `supersonic-playback-status-keys'.  Resolves to nil when
 nothing is playing, so a caller needs no liveness guard of its own.
 One key per call, since callers want them at different moments: the
 now-playing render asks for the position last, so that it is fresh."
- (unless (memq key supersonic-playback-status-keys)
-   (error "Unknown playback status key `%s'" key))
- (when (supersonic-playback-live-p)
-   (aio-await (supersonic-playback--call 'status key))))
+  (unless (memq key supersonic-playback-status-keys)
+    (error "Unknown playback status key `%s'" key))
+  (when (supersonic-playback-live-p)
+    (aio-await (supersonic-playback--call 'status key))))
 
 (defun supersonic-playback-offer-to-save (variable what name)
   "Offer to save VARIABLE, just set to the WHAT called NAME, for future sessions.
@@ -316,9 +315,8 @@ wants touched -- their configuration may set it itself."
         (message "Saved %s %s" what name))
     (message "Selected %s %s for this session" what name)))
 
-(aio-defun
- supersonic-playback-queue ()
- "Return a promise resolving to the active backend's current play queue.
+(aio-defun supersonic-playback-queue ()
+  "Return a promise resolving to the active backend's current play queue.
 Each entry is a plist with `:track-id', a supersonic track id, and
 `:current', non-nil for whichever entry is currently playing.  A
 backend whose player hands out what it plays along with the queue may
@@ -326,8 +324,8 @@ add `:track', the entry's track as `supersonic-provider-track' would
 resolve it, so that showing the queue need not look each entry up
 again.  Resolves to nil when nothing is live, as
 `supersonic-playback-status' does."
- (when (supersonic-playback-live-p)
-   (aio-await (supersonic-playback--call 'queue))))
+  (when (supersonic-playback-live-p)
+    (aio-await (supersonic-playback--call 'queue))))
 
 ;;;###autoload
 (defun supersonic-toggle-playing ()

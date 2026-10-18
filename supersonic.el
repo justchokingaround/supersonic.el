@@ -386,55 +386,52 @@ track starting or ending."
     (when buff
       (supersonic-queue-fetch-and-render buff))))
 
-(aio-defun
- supersonic-queue-parse (entries)
- "Turn ENTRIES into tabulated-list entries.
+(aio-defun supersonic-queue-parse (entries)
+  "Turn ENTRIES into tabulated-list entries.
 ENTRIES are as resolved by `supersonic-playback-queue'.  Each entry's
 track is looked up through `supersonic-provider-track', all at once,
 unless the entry brings its `:track' along; a failed lookup shows as
 \"?\"."
- (let* ((pending
-         (seq-map-indexed
-          (lambda (entry index)
-            (let ((track-id (plist-get entry :track-id)))
-              (list
-               index track-id (plist-get entry :current) (plist-get entry :track)
-               (and track-id
-                    (not (plist-get entry :track))
-                    (aio-catch (supersonic-provider-track track-id))))))
-          entries)))
-   ;; `dolist' rather than `mapcar', so that `aio-await' stays in this
-   ;; function's own body, where generator.el can transform it.
-   (let (rows)
-     (dolist (item pending)
-       (pcase-let ((`(,index ,track-id ,current ,brought ,promise) item))
-         (let* ((outcome (and promise (aio-await promise)))
-                (track (or brought (and outcome (eq (car outcome) :success) (cdr outcome)))))
-           (push (list
-                  ;; Without a track id, the position serves as the row's id.
-                  (or track-id (number-to-string index))
-                  (vector
-                   ;; A blank rather than "" when not current, so the fitted marker column keeps its width.
-                   (if current
-                       "▶"
-                     " ")
-                   (if track
-                       (or (plist-get track :title) "")
-                     "?")
-                   (or (plist-get track :artist) "")
-                   (or (plist-get track :album) "")))
-                 rows))))
-     (nreverse rows))))
+  (let* ((pending
+          (seq-map-indexed
+           (lambda (entry index)
+             (let ((track-id (plist-get entry :track-id)))
+               (list
+                index track-id (plist-get entry :current) (plist-get entry :track)
+                (and track-id
+                     (not (plist-get entry :track))
+                     (aio-catch (supersonic-provider-track track-id))))))
+           entries)))
+    ;; `dolist' rather than `mapcar', so that `aio-await' stays in this
+    ;; function's own body, where generator.el can transform it.
+    (let (rows)
+      (dolist (item pending)
+        (pcase-let ((`(,index ,track-id ,current ,brought ,promise) item))
+          (let* ((outcome (and promise (aio-await promise)))
+                 (track (or brought (and outcome (eq (car outcome) :success) (cdr outcome)))))
+            (push (list
+                   ;; Without a track id, the position serves as the row's id.
+                   (or track-id (number-to-string index))
+                   (vector
+                    ;; A blank rather than "" when not current, so the fitted marker column keeps its width.
+                    (if current
+                        "▶"
+                      " ")
+                    (if track
+                        (or (plist-get track :title) "")
+                      "?")
+                    (or (plist-get track :artist) "")
+                    (or (plist-get track :album) "")))
+                  rows))))
+      (nreverse rows))))
 
-(aio-defun
- supersonic-queue-fetch-and-render
- (buff)
- "Query the active playback backend for its play queue and render it into BUFF."
- (when (buffer-live-p buff)
-   (let ((entries (aio-await (supersonic-queue-parse (aio-await (supersonic-playback-queue))))))
-     (when (buffer-live-p buff)
-       (with-current-buffer buff
-         (supersonic--print-list entries))))))
+(aio-defun supersonic-queue-fetch-and-render (buff)
+  "Query the active playback backend for its play queue and render it into BUFF."
+  (when (buffer-live-p buff)
+    (let ((entries (aio-await (supersonic-queue-parse (aio-await (supersonic-playback-queue))))))
+      (when (buffer-live-p buff)
+        (with-current-buffer buff
+          (supersonic--print-list entries))))))
 
 (defun supersonic-queue-refresh ()
   "Refresh the play queue buffer from the active backend's current play queue."
@@ -447,17 +444,14 @@ unless the entry brings its `:track' along; a failed lookup shows as
     map)
   "Keymap for `supersonic-queue-mode'.")
 
-(define-derived-mode
- supersonic-queue-mode
- tabulated-list-mode
- "Supersonic Queue"
- "Major mode for the play queue opened by `supersonic-show-queue'.
+(define-derived-mode supersonic-queue-mode tabulated-list-mode "Supersonic Queue"
+  "Major mode for the play queue opened by `supersonic-show-queue'.
 Mirrors the active backend's play queue, refreshed whenever it may have changed."
- (setq tabulated-list-format [("" 2 nil) ("Title" 40 t) ("Artist" 25 t) ("Album" 25 t)])
- (setq tabulated-list-padding 2)
- (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
- (supersonic--add-playback-hooks)
- (tabulated-list-init-header))
+  (setq tabulated-list-format [("" 2 nil) ("Title" 40 t) ("Artist" 25 t) ("Album" 25 t)])
+  (setq tabulated-list-padding 2)
+  (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
+  (supersonic--add-playback-hooks)
+  (tabulated-list-init-header))
 
 ;;;###autoload
 (defun supersonic-show-queue ()
@@ -842,15 +836,14 @@ and keeps quiet while the buffer is not on display."
     (when (and buff (get-buffer-window buff t))
       (supersonic-now-playing--show-position buff))))
 
-(aio-defun
- supersonic-now-playing--show-position (buff)
- "Ask the active backend for position and update BUFF accordingly.
+(aio-defun supersonic-now-playing--show-position (buff)
+  "Ask the active backend for position and update BUFF accordingly.
 Runs `supersonic-now-playing-position-functions' with it."
- (let ((position (aio-await (supersonic-playback-status 'position))))
-   (when (buffer-live-p buff)
-     (with-current-buffer buff
-       (setq supersonic-now-playing--position position))
-     (supersonic-now-playing--run-field-functions supersonic-now-playing-position-functions buff position))))
+  (let ((position (aio-await (supersonic-playback-status 'position))))
+    (when (buffer-live-p buff)
+      (with-current-buffer buff
+        (setq supersonic-now-playing--position position))
+      (supersonic-now-playing--run-field-functions supersonic-now-playing-position-functions buff position))))
 
 (defun supersonic-now-playing-maybe-update-position ()
   "Update the position shown in the now-playing buffer, if it is on display.
@@ -1212,37 +1205,36 @@ queue, or nil."
         (when supersonic-now-playing--waveform
           (supersonic-now-playing--show-waveform buff track-id (cdr supersonic-now-playing--waveform)))))))
 
-(aio-defun
- supersonic-now-playing-fetch-and-render (buff)
- "Query the active backend for its current track and render it into BUFF.
+(aio-defun supersonic-now-playing-fetch-and-render (buff)
+  "Query the active backend for its current track and render it into BUFF.
 A failed metadata lookup shows the bare track id instead.  Errors are
 reported, since nobody awaits this."
- (supersonic--with-async-error-handling
-  buff "refresh the now-playing buffer"
-  (if (supersonic-playback-live-p)
-      (let ((track-id (aio-await (supersonic-playback-status 'track-id))))
-        (if track-id
-            (let* ((outcome (aio-await (aio-catch (supersonic-provider-track track-id))))
-                   (song
-                    (if (eq (car outcome) :success)
-                        (cdr outcome)
-                      (list :id track-id :title track-id))))
-              (when (and (supersonic-art-available-p) (plist-get song :art))
-                (aio-await (aio-catch (supersonic--fetch-art (plist-get song :art) supersonic-now-playing-art-size))))
-              ;; Fired concurrently and asked for last, so all three are as
-              ;; fresh as possible: the art fetch above can take a while on a
-              ;; cold cache.
-              (let* ((position-promise (supersonic-playback-status 'position))
-                     (paused-promise (supersonic-playback-status 'paused))
-                     (queue-promise (supersonic-playback-queue))
-                     (position (aio-await position-promise))
-                     (paused (aio-await paused-promise))
-                     (queue-place (supersonic-now-playing--current-queue-place (aio-await queue-promise))))
-                (supersonic-now-playing--render
-                 buff song paused position track-id queue-place)
-                (supersonic-now-playing-maybe-fetch-waveform buff position)))
-          (supersonic-now-playing--render buff nil nil nil nil)))
-    (supersonic-now-playing--render buff nil nil nil nil))))
+  (supersonic--with-async-error-handling
+   buff "refresh the now-playing buffer"
+   (if (supersonic-playback-live-p)
+       (let ((track-id (aio-await (supersonic-playback-status 'track-id))))
+         (if track-id
+             (let* ((outcome (aio-await (aio-catch (supersonic-provider-track track-id))))
+                    (song
+                     (if (eq (car outcome) :success)
+                         (cdr outcome)
+                       (list :id track-id :title track-id))))
+               (when (and (supersonic-art-available-p) (plist-get song :art))
+                 (aio-await (aio-catch (supersonic--fetch-art (plist-get song :art) supersonic-now-playing-art-size))))
+               ;; Fired concurrently and asked for last, so all three are as
+               ;; fresh as possible: the art fetch above can take a while on a
+               ;; cold cache.
+               (let* ((position-promise (supersonic-playback-status 'position))
+                      (paused-promise (supersonic-playback-status 'paused))
+                      (queue-promise (supersonic-playback-queue))
+                      (position (aio-await position-promise))
+                      (paused (aio-await paused-promise))
+                      (queue-place (supersonic-now-playing--current-queue-place (aio-await queue-promise))))
+                 (supersonic-now-playing--render
+                  buff song paused position track-id queue-place)
+                 (supersonic-now-playing-maybe-fetch-waveform buff position)))
+           (supersonic-now-playing--render buff nil nil nil nil)))
+     (supersonic-now-playing--render buff nil nil nil nil))))
 
 (defun supersonic-now-playing--show-waveform (buff track-id envelope)
   "Patch BUFF's waveform field to display ENVELOPE for TRACK-ID, if still current.
@@ -1299,16 +1291,13 @@ seekbar fills in as analysis goes."
     map)
   "Keymap for `supersonic-now-playing-mode'.")
 
-(define-derived-mode
- supersonic-now-playing-mode
- special-mode
- "Supersonic Now Playing"
- "Major mode for the buffer opened by `supersonic-show-now-playing'."
- ;; Every field update replaces text whose display property is a whole
- ;; image spec; undo would keep each superseded cover art overlay and
- ;; seekbar alive, in a buffer nobody edits.
- (buffer-disable-undo)
- (supersonic--add-playback-hooks))
+(define-derived-mode supersonic-now-playing-mode special-mode "Supersonic Now Playing"
+  "Major mode for the buffer opened by `supersonic-show-now-playing'."
+  ;; Every field update replaces text whose display property is a whole
+  ;; image spec; undo would keep each superseded cover art overlay and
+  ;; seekbar alive, in a buffer nobody edits.
+  (buffer-disable-undo)
+  (supersonic--add-playback-hooks))
 
 ;;;###autoload
 (defun supersonic-show-now-playing ()
@@ -1352,14 +1341,14 @@ id is (ID . TYPE), TYPE being \"artist\", \"album\" or \"song\", so
     (lambda (track) (list (cons (plist-get track :id) "song") (vector "Song" (or (plist-get track :title) ""))))
     (plist-get results :tracks))))
 
-(aio-defun
- supersonic-search-refresh (query buff) "Refresh the list of search results from QUERY into BUFF."
- (supersonic--with-async-error-handling
-  buff "search"
-  (let ((results (aio-await (supersonic-provider-search query))))
-    (when (buffer-live-p buff)
-      (with-current-buffer buff
-        (supersonic--print-list (supersonic-search-rows results)))))))
+(aio-defun supersonic-search-refresh (query buff)
+  "Refresh the list of search results from QUERY into BUFF."
+  (supersonic--with-async-error-handling
+   buff "search"
+   (let ((results (aio-await (supersonic-provider-search query))))
+     (when (buffer-live-p buff)
+       (with-current-buffer buff
+         (supersonic--print-list (supersonic-search-rows results)))))))
 
 (defun supersonic-open-search-appropriate-result (result)
   "Opens the RESULT from a search in the appropriate buffer."
@@ -1392,16 +1381,13 @@ id is (ID . TYPE), TYPE being \"artist\", \"album\" or \"song\", so
     (ignore (supersonic-search-refresh (read-string "Query: ") new-buff))
     (pop-to-buffer-same-window new-buff)))
 
-(define-derived-mode
- supersonic-search-mode
- tabulated-list-mode
- "Supersonic search mode"
- "Major mode for the result list opened by `supersonic-search'.
+(define-derived-mode supersonic-search-mode tabulated-list-mode "Supersonic search mode"
+  "Major mode for the result list opened by `supersonic-search'.
 Each row is an artist, album or song; opening one dispatches on which."
- (setq tabulated-list-format [("Type" 10 t) ("Name" 30 t)])
- (setq tabulated-list-padding 2)
- (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
- (tabulated-list-init-header))
+  (setq tabulated-list-format [("Type" 10 t) ("Name" 30 t)])
+  (setq tabulated-list-padding 2)
+  (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
+  (tabulated-list-init-header))
 
 
 ;;;
@@ -1427,20 +1413,18 @@ entry at point.  An ID that isn't in the list at all yields nil."
        (format "%d" (or (plist-get track :track) 0)))))
    tracks))
 
-(aio-defun
- supersonic-get-album-track-ids
- (id)
- "Return the list of track ids for album ID."
- (mapcar (lambda (track) (plist-get track :id)) (aio-await (supersonic-provider-album-tracks id))))
+(aio-defun supersonic-get-album-track-ids (id)
+  "Return the list of track ids for album ID."
+  (mapcar (lambda (track) (plist-get track :id)) (aio-await (supersonic-provider-album-tracks id))))
 
-(aio-defun
- supersonic-tracks-refresh (id buff) "Refresh the list of tracks from ID into BUFF."
- (supersonic--with-async-error-handling
-  buff "fetch tracks"
-  (let ((tracks (aio-await (supersonic-provider-album-tracks id))))
-    (when (buffer-live-p buff)
-      (with-current-buffer buff
-        (supersonic--print-list (supersonic-tracks-rows tracks)))))))
+(aio-defun supersonic-tracks-refresh (id buff)
+  "Refresh the list of tracks from ID into BUFF."
+  (supersonic--with-async-error-handling
+   buff "fetch tracks"
+   (let ((tracks (aio-await (supersonic-provider-album-tracks id))))
+     (when (buffer-live-p buff)
+       (with-current-buffer buff
+         (supersonic--print-list (supersonic-tracks-rows tracks)))))))
 
 (defun supersonic-play-tracks ()
   "Play all the tracks after the point in the list."
@@ -1468,15 +1452,12 @@ entry at point.  An ID that isn't in the list at all yields nil."
     (ignore (supersonic-tracks-refresh id new-buff))
     (pop-to-buffer-same-window new-buff)))
 
-(define-derived-mode
- supersonic-tracks-mode
- tabulated-list-mode
- "Supersonic Tracks"
- "Major mode for the track list of one album, opened by `supersonic-tracks'."
- (setq tabulated-list-format [("Title" 30 t) ("Duration" 10 t) ("Track" 10 t)])
- (setq tabulated-list-padding 2)
- (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
- (tabulated-list-init-header))
+(define-derived-mode supersonic-tracks-mode tabulated-list-mode "Supersonic Tracks"
+  "Major mode for the track list of one album, opened by `supersonic-tracks'."
+  (setq tabulated-list-format [("Title" 30 t) ("Duration" 10 t) ("Track" 10 t)])
+  (setq tabulated-list-padding 2)
+  (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
+  (tabulated-list-init-header))
 
 ;;;
 ;;; Albums
@@ -1513,41 +1494,41 @@ ALBUMS is as resolved by `supersonic-provider-album-list'."
               "")))
    albums))
 
-(aio-defun
- supersonic-albums-refresh (id buff) "Refresh the albums list for a given artist ID into BUFF."
- (supersonic--with-async-error-handling
-  buff "fetch albums"
-  (let ((albums (aio-await (supersonic-provider-artist-albums id))))
-    (when (buffer-live-p buff)
-      (with-current-buffer buff
-        (supersonic--print-list (supersonic-albums-rows albums))
-        (supersonic-get-images tabulated-list-entries (supersonic--arts albums) 2 buff))))))
+(aio-defun supersonic-albums-refresh (id buff)
+  "Refresh the albums list for a given artist ID into BUFF."
+  (supersonic--with-async-error-handling
+   buff "fetch albums"
+   (let ((albums (aio-await (supersonic-provider-artist-albums id))))
+     (when (buffer-live-p buff)
+       (with-current-buffer buff
+         (supersonic--print-list (supersonic-albums-rows albums))
+         (supersonic-get-images tabulated-list-entries (supersonic--arts albums) 2 buff))))))
 
 
-(aio-defun
- supersonic-albums-refresh-type (type buff) "Refresh the albums list for a given album list TYPE into BUFF.
+(aio-defun supersonic-albums-refresh-type (type buff)
+  "Refresh the albums list for a given album list TYPE into BUFF.
 TYPE is one of `supersonic-provider-album-list-types'."
- (supersonic--with-async-error-handling
-  buff "fetch albums"
-  (let ((albums (aio-await (supersonic-provider-album-list type supersonic-album-list-count))))
-    (when (buffer-live-p buff)
-      (with-current-buffer buff
-        (supersonic--print-list (supersonic-albums-type-rows albums))
-        (supersonic-get-images tabulated-list-entries (supersonic--arts albums) 2 buff))))))
+  (supersonic--with-async-error-handling
+   buff "fetch albums"
+   (let ((albums (aio-await (supersonic-provider-album-list type supersonic-album-list-count))))
+     (when (buffer-live-p buff)
+       (with-current-buffer buff
+         (supersonic--print-list (supersonic-albums-type-rows albums))
+         (supersonic-get-images tabulated-list-entries (supersonic--arts albums) 2 buff))))))
 
 (defun supersonic-open-tracks ()
   "Open a list of tracks at point."
   (interactive)
   (supersonic-tracks (tabulated-list-get-id)))
 
-(aio-defun
- supersonic-enqueue-album () "Add all the tracks of the album at point to the play queue." (interactive)
- (supersonic--with-async-error-handling
-  nil "enqueue album"
-  (let* ((track-id (tabulated-list-get-id))
-         (ids (aio-await (supersonic-get-album-track-ids track-id))))
-    (supersonic-playback-enqueue ids)
-    (message "Added %d track(s) to the queue" (length ids)))))
+(aio-defun supersonic-enqueue-album ()
+  "Add all the tracks of the album at point to the play queue." (interactive)
+  (supersonic--with-async-error-handling
+   nil "enqueue album"
+   (let* ((track-id (tabulated-list-get-id))
+          (ids (aio-await (supersonic-get-album-track-ids track-id))))
+     (supersonic-playback-enqueue ids)
+     (message "Added %d track(s) to the queue" (length ids)))))
 
 (defvar supersonic-album-mode-map
   (let ((map (make-sparse-keymap)))
@@ -1599,27 +1580,21 @@ one as a string is accepted too."
       (ignore (supersonic-albums-refresh-type type new-buff))
       (pop-to-buffer-same-window new-buff)))))
 
-(define-derived-mode
- supersonic-album-type-mode
- tabulated-list-mode
- "Supersonic Album List"
- "Major mode for a list of albums across artists (newest, random, ...)."
- (setq tabulated-list-format [("Albums" 30 t) ("Artists" 30 t) ("Art" 30 nil)])
- (setq tabulated-list-padding 2)
- (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
- (setq tabulated-list-use-header-line supersonic-list-use-header-line)
- (tabulated-list-init-header))
+(define-derived-mode supersonic-album-type-mode tabulated-list-mode "Supersonic Album List"
+  "Major mode for a list of albums across artists (newest, random, ...)."
+  (setq tabulated-list-format [("Albums" 30 t) ("Artists" 30 t) ("Art" 30 nil)])
+  (setq tabulated-list-padding 2)
+  (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
+  (setq tabulated-list-use-header-line supersonic-list-use-header-line)
+  (tabulated-list-init-header))
 
-(define-derived-mode
- supersonic-album-mode
- tabulated-list-mode
- "Supersonic Albums"
- "Major mode for the album list of one artist, opened by `supersonic-albums'."
- (setq tabulated-list-format [("Year" 5 t) ("Albums" 40 t) ("Art" 30 nil)])
- (setq tabulated-list-padding 2)
- (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
- (setq tabulated-list-use-header-line supersonic-list-use-header-line)
- (tabulated-list-init-header))
+(define-derived-mode supersonic-album-mode tabulated-list-mode "Supersonic Albums"
+  "Major mode for the album list of one artist, opened by `supersonic-albums'."
+  (setq tabulated-list-format [("Year" 5 t) ("Albums" 40 t) ("Art" 30 nil)])
+  (setq tabulated-list-padding 2)
+  (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
+  (setq tabulated-list-use-header-line supersonic-list-use-header-line)
+  (tabulated-list-init-header))
 
 ;;;
 ;;; Artists
@@ -1636,16 +1611,16 @@ Each row has the artist's name and a cell for its art, which
 the list has no Art column, see `supersonic-artists-format'."
   (mapcar (lambda (artist) (list (plist-get artist :id) (vector (or (plist-get artist :name) "") ""))) artists))
 
-(aio-defun
- supersonic-artists-refresh (buff) "Refresh the list of artists into BUFF."
- (supersonic--with-async-error-handling
-  buff "fetch artists"
-  (let ((artists (aio-await (supersonic-provider-artists))))
-    (when (buffer-live-p buff)
-      (with-current-buffer buff
-        (supersonic--print-list (supersonic-artists-rows artists))
-        (when (> (length tabulated-list-format) 1)
-          (supersonic-art-fill-visible artists 1 supersonic-artist-art-size buff)))))))
+(aio-defun supersonic-artists-refresh (buff)
+  "Refresh the list of artists into BUFF."
+  (supersonic--with-async-error-handling
+   buff "fetch artists"
+   (let ((artists (aio-await (supersonic-provider-artists))))
+     (when (buffer-live-p buff)
+       (with-current-buffer buff
+         (supersonic--print-list (supersonic-artists-rows artists))
+         (when (> (length tabulated-list-format) 1)
+           (supersonic-art-fill-visible artists 1 supersonic-artist-art-size buff)))))))
 
 (defun supersonic-artists-revert ()
   "Refresh the artists buffer from the active library provider."
@@ -1680,16 +1655,13 @@ whatever their proportions."
       `[("Artist" 30 t) ("Art" ,(max 3 (1+ (ceiling supersonic-artist-art-size (frame-char-width)))) nil)]
     [("Artist" 30 t)]))
 
-(define-derived-mode
- supersonic-artist-mode
- tabulated-list-mode
- "Supersonic Artists"
- "Major mode for the artist list opened by `supersonic-artists'."
- (setq tabulated-list-format (supersonic-artists-format))
- (setq tabulated-list-padding 2)
- (setq tabulated-list-use-header-line supersonic-list-use-header-line)
- (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
- (tabulated-list-init-header))
+(define-derived-mode supersonic-artist-mode tabulated-list-mode "Supersonic Artists"
+  "Major mode for the artist list opened by `supersonic-artists'."
+  (setq tabulated-list-format (supersonic-artists-format))
+  (setq tabulated-list-padding 2)
+  (setq tabulated-list-use-header-line supersonic-list-use-header-line)
+  (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
+  (tabulated-list-init-header))
 
 ;;;
 ;;; Podcasts
@@ -1698,15 +1670,15 @@ whatever their proportions."
   "Turn PODCASTS, as resolved by `supersonic-provider-podcasts', into entries."
   (mapcar (lambda (channel) (list (plist-get channel :id) (vector (or (plist-get channel :title) "") ""))) podcasts))
 
-(aio-defun
- supersonic-podcasts-refresh (buff) "Refresh the list of podcasts into BUFF."
- (supersonic--with-async-error-handling
-  buff "fetch podcasts"
-  (let ((podcasts (aio-await (supersonic-provider-podcasts))))
-    (when (buffer-live-p buff)
-      (with-current-buffer buff
-        (supersonic--print-list (supersonic-podcasts-rows podcasts))
-        (supersonic-get-images tabulated-list-entries (supersonic--arts podcasts) 1 buff))))))
+(aio-defun supersonic-podcasts-refresh (buff)
+  "Refresh the list of podcasts into BUFF."
+  (supersonic--with-async-error-handling
+   buff "fetch podcasts"
+   (let ((podcasts (aio-await (supersonic-provider-podcasts))))
+     (when (buffer-live-p buff)
+       (with-current-buffer buff
+         (supersonic--print-list (supersonic-podcasts-rows podcasts))
+         (supersonic-get-images tabulated-list-entries (supersonic--arts podcasts) 1 buff))))))
 
 
 (defun supersonic-open-podcast-episodes ()
@@ -1724,18 +1696,18 @@ has no podcasts to subscribe to, which is reported before asking."
      (list (read-string "feed url: "))))
   (supersonic--add-podcast url))
 
-(aio-defun
- supersonic--add-podcast (url) "Subscribe to URL, reporting how that went in the echo area."
- (supersonic--with-async-error-handling
-  nil "add podcast"
-  (aio-await (supersonic-provider-add-podcast url))
-  (message "Podcast added")))
+(aio-defun supersonic--add-podcast (url)
+  "Subscribe to URL, reporting how that went in the echo area."
+  (supersonic--with-async-error-handling
+   nil "add podcast"
+   (aio-await (supersonic-provider-add-podcast url))
+   (message "Podcast added")))
 
-(transient-define-prefix
- supersonic-podcast-help () "Help transient for podcasts."
- ["Supersonic podcast help"
-  ("a" "Add a podcast" supersonic-add-podcast :if supersonic--offer-add-podcast-p)
-  ("RET" "Open a podcast" supersonic-open-podcast-episodes :if supersonic--offer-podcast-episodes-p)])
+(transient-define-prefix supersonic-podcast-help ()
+  "Help transient for podcasts."
+  ["Supersonic podcast help"
+   ("a" "Add a podcast" supersonic-add-podcast :if supersonic--offer-add-podcast-p)
+   ("RET" "Open a podcast" supersonic-open-podcast-episodes :if supersonic--offer-podcast-episodes-p)])
 
 (defvar supersonic-podcast-mode-map
   (let ((map (make-sparse-keymap)))
@@ -1755,16 +1727,13 @@ has no podcasts to subscribe to, which is reported before asking."
     (ignore (supersonic-podcasts-refresh new-buff))
     (pop-to-buffer-same-window new-buff)))
 
-(define-derived-mode
- supersonic-podcast-mode
- tabulated-list-mode
- "Supersonic Podcasts"
- "Major mode for the podcast channel list opened by `supersonic-podcasts'."
- (setq tabulated-list-format [("Podcasts" 30 t) ("Art" 20 nil)])
- (setq tabulated-list-padding 2)
- (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
- (setq tabulated-list-use-header-line supersonic-list-use-header-line)
- (tabulated-list-init-header))
+(define-derived-mode supersonic-podcast-mode tabulated-list-mode "Supersonic Podcasts"
+  "Major mode for the podcast channel list opened by `supersonic-podcasts'."
+  (setq tabulated-list-format [("Podcasts" 30 t) ("Art" 20 nil)])
+  (setq tabulated-list-padding 2)
+  (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
+  (setq tabulated-list-use-header-line supersonic-list-use-header-line)
+  (tabulated-list-init-header))
 
 ;;;
 ;;; Podcast episodes
@@ -1788,14 +1757,14 @@ EPISODES is as resolved by `supersonic-provider-podcast-episodes'."
   (interactive)
   (supersonic-playback-start (list (tabulated-list-get-id))))
 
-(aio-defun
- supersonic-podcasts-episode-refresh (id buff) "Refresh the list of podcast episodes for a podcast ID into BUFF."
- (supersonic--with-async-error-handling
-  buff "fetch episodes"
-  (let ((episodes (aio-await (supersonic-provider-podcast-episodes id))))
-    (when (buffer-live-p buff)
-      (with-current-buffer buff
-        (supersonic--print-list (supersonic-podcast-episodes-rows episodes)))))))
+(aio-defun supersonic-podcasts-episode-refresh (id buff)
+  "Refresh the list of podcast episodes for a podcast ID into BUFF."
+  (supersonic--with-async-error-handling
+   buff "fetch episodes"
+   (let ((episodes (aio-await (supersonic-provider-podcast-episodes id))))
+     (when (buffer-live-p buff)
+       (with-current-buffer buff
+         (supersonic--print-list (supersonic-podcast-episodes-rows episodes)))))))
 
 (defun supersonic-download-podcast-episode ()
   "Have the library provider download the podcast episode at point."
@@ -1803,18 +1772,18 @@ EPISODES is as resolved by `supersonic-provider-podcast-episodes'."
   (supersonic-provider-require 'download-podcast-episode)
   (supersonic--download-podcast-episode (tabulated-list-get-id)))
 
-(aio-defun
- supersonic--download-podcast-episode (id) "Start downloading episode ID, reporting how that went."
- (supersonic--with-async-error-handling
-  nil "download episode"
-  (aio-await (supersonic-provider-download-podcast-episode id))
-  (message "Episode download started")))
+(aio-defun supersonic--download-podcast-episode (id)
+  "Start downloading episode ID, reporting how that went."
+  (supersonic--with-async-error-handling
+   nil "download episode"
+   (aio-await (supersonic-provider-download-podcast-episode id))
+   (message "Episode download started")))
 
-(transient-define-prefix
- supersonic-podcast-episode-help () "Help transient for podcast episodes."
- ["Supersonic podcast episode help"
-  ("d" "Download" supersonic-download-podcast-episode :if supersonic--offer-download-podcast-episode-p)
-  ("RET" "Start playing" supersonic-play-podcast)])
+(transient-define-prefix supersonic-podcast-episode-help ()
+  "Help transient for podcast episodes."
+  ["Supersonic podcast episode help"
+   ("d" "Download" supersonic-download-podcast-episode :if supersonic--offer-download-podcast-episode-p)
+   ("RET" "Start playing" supersonic-play-podcast)])
 
 
 (defvar supersonic-podcast-episodes-mode-map
@@ -1833,17 +1802,14 @@ EPISODES is as resolved by `supersonic-provider-podcast-episodes'."
     (ignore (supersonic-podcasts-episode-refresh id new-buff))
     (pop-to-buffer-same-window new-buff)))
 
-(define-derived-mode
- supersonic-podcast-episodes-mode
- tabulated-list-mode
- "Supersonic Podcast Episodes"
- "Major mode for one podcast channel's episodes.
+(define-derived-mode supersonic-podcast-episodes-mode tabulated-list-mode "Supersonic Podcast Episodes"
+  "Major mode for one podcast channel's episodes.
 Opened by `supersonic-podcast-episodes'."
- (setq tabulated-list-format [("Title" 50 t) ("Duration" 10 t) ("Status" 24 t)])
- (setq tabulated-list-padding 2)
- (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
- (setq tabulated-list-use-header-line supersonic-list-use-header-line)
- (tabulated-list-init-header))
+  (setq tabulated-list-format [("Title" 50 t) ("Duration" 10 t) ("Status" 24 t)])
+  (setq tabulated-list-padding 2)
+  (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
+  (setq tabulated-list-use-header-line supersonic-list-use-header-line)
+  (tabulated-list-init-header))
 
 ;;;
 ;;; Switching providers
@@ -1944,25 +1910,25 @@ provider is missing."
   (supersonic--offers-p 'download-podcast-episode))
 
 ;;;###autoload (autoload 'supersonic "supersonic" nil t)
-(transient-define-prefix
- supersonic () "Help transient for supersonic."
- [["Supersonic"
-   ("a" "Artists" supersonic-artists :if supersonic--offer-artists-p)
-   ("e" "Recent Albums" supersonic-recent-albums :if supersonic--offer-album-list-p)
-   ("r" "Random Albums" supersonic-random-albums :if supersonic--offer-album-list-p)
-   ("n" "Newest Albums" supersonic-newest-albums :if supersonic--offer-album-list-p)
-   ("s" "Search" supersonic-search :if supersonic--offer-search-p)
-   ("p" "Podcasts" supersonic-podcasts :if supersonic--offer-podcasts-p)]
-  ["Controls"
-   ("Q" "Show queue" supersonic-show-queue)
-   ("N" "Now playing" supersonic-show-now-playing)
-   ("SPC" "Toggle playing" supersonic-toggle-playing)
-   ("f" "Skip track" supersonic-skip-track)
-   ("b" "Previous track" supersonic-prev-track)
-   ("F" "Seek forward" supersonic-seek-forward :transient t)
-   ("B" "Seek back" supersonic-seek-back :transient t)
-   ("k" "Switch backend" supersonic-playback-switch-backend)
-   ("P" "Switch provider" supersonic-provider-switch)]])
+(transient-define-prefix supersonic ()
+  "Help transient for supersonic."
+  [["Supersonic"
+    ("a" "Artists" supersonic-artists :if supersonic--offer-artists-p)
+    ("e" "Recent Albums" supersonic-recent-albums :if supersonic--offer-album-list-p)
+    ("r" "Random Albums" supersonic-random-albums :if supersonic--offer-album-list-p)
+    ("n" "Newest Albums" supersonic-newest-albums :if supersonic--offer-album-list-p)
+    ("s" "Search" supersonic-search :if supersonic--offer-search-p)
+    ("p" "Podcasts" supersonic-podcasts :if supersonic--offer-podcasts-p)]
+   ["Controls"
+    ("Q" "Show queue" supersonic-show-queue)
+    ("N" "Now playing" supersonic-show-now-playing)
+    ("SPC" "Toggle playing" supersonic-toggle-playing)
+    ("f" "Skip track" supersonic-skip-track)
+    ("b" "Previous track" supersonic-prev-track)
+    ("F" "Seek forward" supersonic-seek-forward :transient t)
+    ("B" "Seek back" supersonic-seek-back :transient t)
+    ("k" "Switch backend" supersonic-playback-switch-backend)
+    ("P" "Switch provider" supersonic-provider-switch)]])
 
 (defun supersonic-unload-function ()
   "Undo the `supersonic-playback.el' hook entries a queue/now-playing buffer added.

@@ -154,92 +154,81 @@ only the first channel in it is read."
 ;;; Operations
 ;;;
 
-(aio-defun
- supersonic-subsonic--artists () "Return a promise resolving to every artist, via getArtists."
- (supersonic-subsonic--artists-from (aio-await (supersonic-get-json (supersonic-build-url "/getArtists.view" '())))))
+(aio-defun supersonic-subsonic--artists ()
+  "Return a promise resolving to every artist, via getArtists."
+  (supersonic-subsonic--artists-from (aio-await (supersonic-get-json (supersonic-build-url "/getArtists.view" '())))))
 
-(aio-defun
- supersonic-subsonic--artist-albums
- (id)
- "Return a promise resolving to the albums of artist ID, via getArtist."
- (supersonic-subsonic--artist-albums-from
-  (aio-await (supersonic-get-json (supersonic-build-url "/getArtist.view" `(("id" . ,id)))))))
+(aio-defun supersonic-subsonic--artist-albums (id)
+  "Return a promise resolving to the albums of artist ID, via getArtist."
+  (supersonic-subsonic--artist-albums-from
+   (aio-await (supersonic-get-json (supersonic-build-url "/getArtist.view" `(("id" . ,id)))))))
 
-(aio-defun
- supersonic-subsonic--album-list
- (type count)
- "Return a promise resolving to at most COUNT albums of list TYPE.
+(aio-defun supersonic-subsonic--album-list (type count)
+  "Return a promise resolving to at most COUNT albums of list TYPE.
 Asks getAlbumList2.  TYPE is one of
 `supersonic-provider-album-list-types', each of which is also the
 name getAlbumList2 knows that list under."
- (supersonic-subsonic--album-list-from
-  (aio-await
-   (supersonic-get-json
-    (supersonic-build-url
-     "/getAlbumList2.view" `(("type" . ,(symbol-name type)) ("size" . ,(number-to-string count))))))))
+  (supersonic-subsonic--album-list-from
+   (aio-await
+    (supersonic-get-json
+     (supersonic-build-url
+      "/getAlbumList2.view" `(("type" . ,(symbol-name type)) ("size" . ,(number-to-string count))))))))
 
-(aio-defun
- supersonic-subsonic--album-tracks
- (id)
- "Return a promise resolving to the tracks of album ID.
+(aio-defun supersonic-subsonic--album-tracks (id)
+  "Return a promise resolving to the tracks of album ID.
 Asks getAlbum when `supersonic-browse-by-tags' is non-nil, and
 getMusicDirectory -- ID then being a directory -- otherwise."
- (supersonic-subsonic--album-tracks-from
-  (aio-await
-   (supersonic-get-json
-    (if supersonic-browse-by-tags
-        (supersonic-build-url "/getAlbum.view" `(("id" . ,id)))
-      (supersonic-build-url "/getMusicDirectory.view" `(("id" . ,id))))))))
+  (supersonic-subsonic--album-tracks-from
+   (aio-await
+    (supersonic-get-json
+     (if supersonic-browse-by-tags
+         (supersonic-build-url "/getAlbum.view" `(("id" . ,id)))
+       (supersonic-build-url "/getMusicDirectory.view" `(("id" . ,id))))))))
 
-(aio-defun
- supersonic-subsonic--song (id) "Return a promise resolving to track ID, via getSong."
- (supersonic-subsonic--song-from (aio-await (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,id)))))))
+(aio-defun supersonic-subsonic--song (id)
+  "Return a promise resolving to track ID, via getSong."
+  (supersonic-subsonic--song-from (aio-await (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,id)))))))
 
-(aio-defun
- supersonic-subsonic--search (query) "Return a promise resolving to the search3 results for QUERY."
- (supersonic-subsonic--search-from
-  (aio-await (supersonic-get-json (supersonic-build-url "/search3.view" `(("query" . ,query)))))))
+(aio-defun supersonic-subsonic--search (query)
+  "Return a promise resolving to the search3 results for QUERY."
+  (supersonic-subsonic--search-from
+   (aio-await (supersonic-get-json (supersonic-build-url "/search3.view" `(("query" . ,query)))))))
 
-(aio-defun
- supersonic-subsonic--podcasts () "Return a promise resolving to every channel, via getPodcasts."
- (supersonic-subsonic--podcasts-from
-  (aio-await (supersonic-get-json (supersonic-build-url "/getPodcasts.view" '(("includeEpisodes" . "false")))))))
+(aio-defun supersonic-subsonic--podcasts ()
+  "Return a promise resolving to every channel, via getPodcasts."
+  (supersonic-subsonic--podcasts-from
+   (aio-await (supersonic-get-json (supersonic-build-url "/getPodcasts.view" '(("includeEpisodes" . "false")))))))
 
-(aio-defun
- supersonic-subsonic--podcast-episodes
- (id)
- "Return a promise resolving to the episodes of podcast channel ID.
+(aio-defun supersonic-subsonic--podcast-episodes (id)
+  "Return a promise resolving to the episodes of podcast channel ID.
 Asks getPodcasts for that one channel, episodes included."
- (supersonic-subsonic--podcast-episodes-from
-  (aio-await
-   (supersonic-get-json (supersonic-build-url "/getPodcasts.view" `(("id" . ,id) ("includeEpisodes" . "true")))))))
+  (supersonic-subsonic--podcast-episodes-from
+   (aio-await
+    (supersonic-get-json (supersonic-build-url "/getPodcasts.view" `(("id" . ,id) ("includeEpisodes" . "true")))))))
 
-(aio-defun
- supersonic-subsonic--add-podcast (url) "Subscribe to the podcast feed at URL, via createPodcastChannel."
- (aio-await (supersonic-get-json (supersonic-build-url "/createPodcastChannel.view" `(("url" . ,url)))))
- nil)
+(aio-defun supersonic-subsonic--add-podcast (url)
+  "Subscribe to the podcast feed at URL, via createPodcastChannel."
+  (aio-await (supersonic-get-json (supersonic-build-url "/createPodcastChannel.view" `(("url" . ,url)))))
+  nil)
 
-(aio-defun
- supersonic-subsonic--download-podcast-episode
- (id)
- "Have the server download podcast episode ID, via downloadPodcastEpisode."
- (aio-await (supersonic-get-json (supersonic-build-url "/downloadPodcastEpisode.view" `(("id" . ,id)))))
- nil)
+(aio-defun supersonic-subsonic--download-podcast-episode (id)
+  "Have the server download podcast episode ID, via downloadPodcastEpisode."
+  (aio-await (supersonic-get-json (supersonic-build-url "/downloadPodcastEpisode.view" `(("id" . ,id)))))
+  nil)
 
-(aio-defun
- supersonic-subsonic--stream-url (id &optional format)
- "Return a promise resolving to the stream.view URL for track ID.
+(aio-defun supersonic-subsonic--stream-url (id &optional format)
+  "Return a promise resolving to the stream.view URL for track ID.
 Built locally.  It carries the token-auth triple, which never expires.
 FORMAT's `:format' becomes stream.view's `format' (EXT, or \"raw\" for
 no transcoding) and `:max-bit-rate' its `maxBitRate'; a key left out
 leaves the choice to the server."
- (supersonic-build-url
-  "/stream.view"
-  (append
-   `(("id" . ,id))
-   (and (plist-get format :format) `(("format" . ,(plist-get format :format))))
-   (and (plist-get format :max-bit-rate)
-        `(("maxBitRate" . ,(number-to-string (plist-get format :max-bit-rate))))))))
+  (supersonic-build-url
+   "/stream.view"
+   (append
+    `(("id" . ,id))
+    (and (plist-get format :format) `(("format" . ,(plist-get format :format))))
+    (and (plist-get format :max-bit-rate)
+         `(("maxBitRate" . ,(number-to-string (plist-get format :max-bit-rate))))))))
 
 (defun supersonic-subsonic--scrobble (id now-playing)
   "Scrobble track ID via scrobble.view, as now playing if NOW-PLAYING."
@@ -259,26 +248,24 @@ leaves the choice to the server."
   "Return the getCoverArt URL for cover art ART, scaled to SIZE."
   (supersonic-build-url "/getCoverArt.view" `(("id" . ,art) ("size" . ,(int-to-string size)))))
 
-(aio-defun
- supersonic-subsonic--cover-art (art size)
- "Return a promise resolving to the bytes of cover art ART at SIZE.
+(aio-defun supersonic-subsonic--cover-art (art size)
+  "Return a promise resolving to the bytes of cover art ART at SIZE.
 Asks getCoverArt, which scales the image to SIZE on the server."
- (pcase-let ((`(,status . ,buffer)
-              (aio-await (supersonic-url-retrieve (supersonic-subsonic--cover-art-request-url art size)))))
-   (unwind-protect
-       (let ((err (plist-get status :error)))
-         (when err
-           (error "Failed to fetch cover art %s: %s" art (error-message-string err)))
-         (with-current-buffer buffer
-           (buffer-substring-no-properties (1+ url-http-end-of-headers) (point-max))))
-     (kill-buffer buffer))))
+  (pcase-let ((`(,status . ,buffer)
+               (aio-await (supersonic-url-retrieve (supersonic-subsonic--cover-art-request-url art size)))))
+    (unwind-protect
+        (let ((err (plist-get status :error)))
+          (when err
+            (error "Failed to fetch cover art %s: %s" art (error-message-string err)))
+          (with-current-buffer buffer
+            (buffer-substring-no-properties (1+ url-http-end-of-headers) (point-max))))
+      (kill-buffer buffer))))
 
-(aio-defun
- supersonic-subsonic--cover-art-url (art size)
- "Return a promise resolving to the getCoverArt URL for ART at SIZE.
+(aio-defun supersonic-subsonic--cover-art-url (art size)
+  "Return a promise resolving to the getCoverArt URL for ART at SIZE.
 Built locally, and carrying the same token-auth triple as
 `supersonic-subsonic--stream-url'."
- (supersonic-subsonic--cover-art-request-url art size))
+  (supersonic-subsonic--cover-art-request-url art size))
 
 (defun supersonic-subsonic--cache-namespace ()
   "Return the Subsonic server's address, `supersonic-host'.

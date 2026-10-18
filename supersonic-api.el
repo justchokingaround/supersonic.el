@@ -142,33 +142,32 @@ closed connection as well, the same as `url-queue-kill-job'."
                    (lambda ()
                      (error "No answer from %s within %s seconds" endpoint timeout))))))
 
-(aio-defun
- supersonic-get-text (url)
- "Return a promise resolving to the body of the response from URL, as text.
+(aio-defun supersonic-get-text (url)
+  "Return a promise resolving to the body of the response from URL, as text.
 The body is decoded as UTF-8, as both Subsonic JSON and UPnP device
 descriptions are; `url-retrieve' doesn't reliably do that across Emacs
 versions.  The promise rejects if the request failed."
- (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-url-retrieve url))))
-   (unwind-protect
-       (progn
-         (when (plist-get status :error)
-           (error "Failed to fetch %s: %S" url (plist-get status :error)))
-         (with-current-buffer buffer
-           (decode-coding-string (buffer-substring (1+ url-http-end-of-headers) (point-max)) 'utf-8)))
-     (kill-buffer buffer))))
+  (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-url-retrieve url))))
+    (unwind-protect
+        (progn
+          (when (plist-get status :error)
+            (error "Failed to fetch %s: %S" url (plist-get status :error)))
+          (with-current-buffer buffer
+            (decode-coding-string (buffer-substring (1+ url-http-end-of-headers) (point-max)) 'utf-8)))
+      (kill-buffer buffer))))
 
-(aio-defun
- supersonic-get-json (url) "Return a promise resolving to the parsed json response from URL."
- (let* ((body (aio-await (supersonic-get-text url)))
-        (json-array-type 'list)
-        (json-key-type 'string)
-        (data
-         (condition-case nil
-             (json-read-from-string body)
-           (json-readtable-error
-            (error "Failed to read json")))))
-   (supersonic--signal-if-failed data)
-   data))
+(aio-defun supersonic-get-json (url)
+  "Return a promise resolving to the parsed json response from URL."
+  (let* ((body (aio-await (supersonic-get-text url)))
+         (json-array-type 'list)
+         (json-key-type 'string)
+         (data
+          (condition-case nil
+              (json-read-from-string body)
+            (json-readtable-error
+             (error "Failed to read json")))))
+    (supersonic--signal-if-failed data)
+    data))
 
 (defun supersonic--signal-if-failed (data)
   "Signal an `error' if the parsed Subsonic response DATA reports failure.

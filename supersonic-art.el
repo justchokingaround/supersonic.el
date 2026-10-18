@@ -286,57 +286,54 @@ shifted left by OFFSET: one frame of the scroll
       (funcall layer ctx))
     (propertize " " 'display (svg-image (plist-get ctx :svg) :base-uri (plist-get ctx :file)))))
 
-(aio-defun
- supersonic--fetch-art (id size)
- "Ensure cover art ID is cached on disk at SIZE, fetching it if necessary.
+(aio-defun supersonic--fetch-art (id size)
+  "Ensure cover art ID is cached on disk at SIZE, fetching it if necessary.
 ID is an `:art' reference, fetched through `supersonic-provider-cover-art'.
 Returns a promise that resolves once the art is cached, and rejects if
 it could not be fetched."
- (let ((file (supersonic-art-cache-file id size)))
-   (unless (file-exists-p file)
-     (let ((data (aio-await (supersonic-provider-cover-art id size))))
-       (unless (file-exists-p supersonic-cache-path)
-         (mkdir supersonic-cache-path t))
-       (with-temp-buffer
-         (set-buffer-multibyte nil)
-         (insert data)
-         ;; Binary data: write the bytes as-is.
-         (let ((coding-system-for-write 'no-conversion))
-           (write-region nil nil file nil 'no-message)))))))
+  (let ((file (supersonic-art-cache-file id size)))
+    (unless (file-exists-p file)
+      (let ((data (aio-await (supersonic-provider-cover-art id size))))
+        (unless (file-exists-p supersonic-cache-path)
+          (mkdir supersonic-cache-path t))
+        (with-temp-buffer
+          (set-buffer-multibyte nil)
+          (insert data)
+          ;; Binary data: write the bytes as-is.
+          (let ((coding-system-for-write 'no-conversion))
+            (write-region nil nil file nil 'no-message)))))))
 
-(aio-defun
- supersonic--fetch-art-throttled (sem id size)
- "Fetch cover art ID at SIZE once SEM hands out a slot.
+(aio-defun supersonic--fetch-art-throttled (sem id size)
+  "Fetch cover art ID at SIZE once SEM hands out a slot.
 Failures are swallowed, so the slot is always given back and one
 unreachable cover doesn't hold up the rest."
- (aio-await (aio-sem-wait sem)) (aio-await (aio-catch (supersonic--fetch-art id size))) (aio-sem-post sem))
+  (aio-await (aio-sem-wait sem)) (aio-await (aio-catch (supersonic--fetch-art id size))) (aio-sem-post sem))
 
-(aio-defun
- supersonic-get-images (entries arts n buff)
- "Fetch/cache cover art for ENTRIES and paint it into column N of BUFF.
+(aio-defun supersonic-get-images (entries arts n buff)
+  "Fetch/cache cover art for ENTRIES and paint it into column N of BUFF.
 ARTS holds each entry's `:art' reference, in the same order as
 ENTRIES; an entry whose reference is nil is left without art.  At most
 `supersonic-art-fetch-concurrency' fetches run at a time, and a failed
 one leaves its entry without art.  BUFF is reprinted once every fetch
 has settled."
- (if (not (supersonic-art-available-p))
-     (dolist (entry entries)
-       (aset (nth 1 entry) n ""))
-   (let* ((sem (aio-sem supersonic-art-fetch-concurrency))
-          (pending
-           (cl-mapcar
-            (lambda (entry art)
-              (list entry art (and art (supersonic--fetch-art-throttled sem art supersonic-list-art-size))))
-            entries arts)))
-     (pcase-dolist (`(,entry ,art ,promise) pending)
-       (when promise
-         (aio-await promise)
-         (when (file-exists-p (supersonic-art-cache-file art supersonic-list-art-size))
-           (aset (nth 1 entry) n (supersonic-image-propertize art supersonic-list-art-size)))))))
- (when (buffer-live-p buff)
-   (with-current-buffer buff
-     (when (derived-mode-p 'tabulated-list-mode)
-       (tabulated-list-print t)))))
+  (if (not (supersonic-art-available-p))
+      (dolist (entry entries)
+        (aset (nth 1 entry) n ""))
+    (let* ((sem (aio-sem supersonic-art-fetch-concurrency))
+           (pending
+            (cl-mapcar
+             (lambda (entry art)
+               (list entry art (and art (supersonic--fetch-art-throttled sem art supersonic-list-art-size))))
+             entries arts)))
+      (pcase-dolist (`(,entry ,art ,promise) pending)
+        (when promise
+          (aio-await promise)
+          (when (file-exists-p (supersonic-art-cache-file art supersonic-list-art-size))
+            (aset (nth 1 entry) n (supersonic-image-propertize art supersonic-list-art-size)))))))
+  (when (buffer-live-p buff)
+    (with-current-buffer buff
+      (when (derived-mode-p 'tabulated-list-mode)
+        (tabulated-list-print t)))))
 
 ;;; Art filled in as rows come into view
 
@@ -434,27 +431,26 @@ In view as `supersonic-art--in-view' has it."
   "Return non-nil if BUFF is live and still filled under LAZY."
   (and (buffer-live-p buff) (eq lazy (buffer-local-value 'supersonic-art--lazy buff))))
 
-(aio-defun
- supersonic-art--fill-row (buff lazy id art)
- "Fetch ART for the row of ID in BUFF, then redraw that row with it.
+(aio-defun supersonic-art--fill-row (buff lazy id art)
+  "Fetch ART for the row of ID in BUFF, then redraw that row with it.
 LAZY is the `supersonic-art--lazy' the request was made under.  Art
 already cached is shown without waiting for a slot.  Once it has a
 slot, the request is dropped if BUFF was refilled meanwhile, and
 dropped and forgotten if its row was scrolled away, so it is asked for
 again when the row is back.  Failures leave the row without art."
- (let ((size (plist-get lazy :size)))
-   (unless (file-exists-p (supersonic-art-cache-file art size))
-     (let ((sem (buffer-local-value 'supersonic-art--lazy-sem buff)))
-       (aio-await (aio-sem-wait sem))
-       (when (supersonic-art--current-p buff lazy)
-         (if (with-current-buffer buff (supersonic-art--in-view-p id))
-             (aio-await (aio-catch (supersonic--fetch-art art size)))
-           (remhash id (plist-get lazy :requested))))
-       (aio-sem-post sem)))
-   (when (and (supersonic-art--current-p buff lazy)
-              (file-exists-p (supersonic-art-cache-file art size)))
-     (with-current-buffer buff
-       (supersonic-art--redraw-row id (plist-get lazy :column) (supersonic-image-propertize art size size))))))
+  (let ((size (plist-get lazy :size)))
+    (unless (file-exists-p (supersonic-art-cache-file art size))
+      (let ((sem (buffer-local-value 'supersonic-art--lazy-sem buff)))
+        (aio-await (aio-sem-wait sem))
+        (when (supersonic-art--current-p buff lazy)
+          (if (with-current-buffer buff (supersonic-art--in-view-p id))
+              (aio-await (aio-catch (supersonic--fetch-art art size)))
+            (remhash id (plist-get lazy :requested))))
+        (aio-sem-post sem)))
+    (when (and (supersonic-art--current-p buff lazy)
+               (file-exists-p (supersonic-art-cache-file art size)))
+      (with-current-buffer buff
+        (supersonic-art--redraw-row id (plist-get lazy :column) (supersonic-image-propertize art size size))))))
 
 (defun supersonic-art--redraw-row (id n cell)
   "Set column N of the entry ID to CELL and redraw just its row.

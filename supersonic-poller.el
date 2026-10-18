@@ -133,9 +133,8 @@ position that crept on, so a seek runs it itself, see
       (unless (eq (plist-get previous :paused) (plist-get current :paused))
         (run-hooks 'supersonic-playback-state-change-hook))))))
 
-(aio-defun
- supersonic-poller-poll (poller)
- "Poll POLLER's player, keep the snapshot and announce what changed.
+(aio-defun supersonic-poller-poll (poller)
+  "Poll POLLER's player, keep the snapshot and announce what changed.
 A poll that gets an answer marks the backend live and runs the
 facade's hooks, see `supersonic-poller-announce'; one that does not
 marks it not live, runs POLLER's `on-failure', and the first time in
@@ -157,42 +156,42 @@ from a facade hook, `on-failure' or `on-landed' is reported as failing
 to run the playback hooks, and leaves the backend live.  A poll still
 waiting for its answer when polling stops changes nothing once the
 answer arrives, see `supersonic-poller--stop'."
- (while (supersonic-poller-in-flight poller)
-   (aio-await (supersonic-poller-in-flight poller)))
- (let ((done (aio-promise))
-       (generation (supersonic-poller-generation poller))
-       (previous (supersonic-poller-snapshot poller))
-       (was-live (supersonic-poller-live poller))
-       (snapshot nil)
-       (failure nil)
-       (then nil))
-   (setf (supersonic-poller-in-flight poller) done)
-   (unwind-protect
-       (progn
-         (condition-case err
-             (setq snapshot (aio-await (funcall (supersonic-poller-fetch poller))))
-           (error (setq failure err)))
-         (when (eql generation (supersonic-poller-generation poller))
-           (supersonic--with-async-error-handling nil "run the playback hooks"
-             (if failure
-                 (progn
-                   (setf (supersonic-poller-live poller) nil)
-                   (when (supersonic-poller-on-failure poller)
-                     (funcall (supersonic-poller-on-failure poller)))
-                   (unless (supersonic-poller-failing poller)
-                     (setf (supersonic-poller-failing poller) t)
-                     (supersonic--report-async-error (supersonic-poller-description poller) failure)
-                     (run-hooks 'supersonic-playback-track-change-hook)))
-               (setf (supersonic-poller-snapshot poller) snapshot)
-               (setf (supersonic-poller-live poller) t)
-               (setf (supersonic-poller-failing poller) nil)
-               (when (supersonic-poller-on-landed poller)
-                 (setq then (funcall (supersonic-poller-on-landed poller) previous snapshot)))
-               (supersonic-poller-announce poller (not was-live))))))
-     (setf (supersonic-poller-in-flight poller) nil)
-     (aio-resolve done #'ignore))
-   (when then
-     (aio-await (funcall then)))))
+  (while (supersonic-poller-in-flight poller)
+    (aio-await (supersonic-poller-in-flight poller)))
+  (let ((done (aio-promise))
+        (generation (supersonic-poller-generation poller))
+        (previous (supersonic-poller-snapshot poller))
+        (was-live (supersonic-poller-live poller))
+        (snapshot nil)
+        (failure nil)
+        (then nil))
+    (setf (supersonic-poller-in-flight poller) done)
+    (unwind-protect
+        (progn
+          (condition-case err
+              (setq snapshot (aio-await (funcall (supersonic-poller-fetch poller))))
+            (error (setq failure err)))
+          (when (eql generation (supersonic-poller-generation poller))
+            (supersonic--with-async-error-handling nil "run the playback hooks"
+                                                   (if failure
+                                                       (progn
+                                                         (setf (supersonic-poller-live poller) nil)
+                                                         (when (supersonic-poller-on-failure poller)
+                                                           (funcall (supersonic-poller-on-failure poller)))
+                                                         (unless (supersonic-poller-failing poller)
+                                                           (setf (supersonic-poller-failing poller) t)
+                                                           (supersonic--report-async-error (supersonic-poller-description poller) failure)
+                                                           (run-hooks 'supersonic-playback-track-change-hook)))
+                                                     (setf (supersonic-poller-snapshot poller) snapshot)
+                                                     (setf (supersonic-poller-live poller) t)
+                                                     (setf (supersonic-poller-failing poller) nil)
+                                                     (when (supersonic-poller-on-landed poller)
+                                                       (setq then (funcall (supersonic-poller-on-landed poller) previous snapshot)))
+                                                     (supersonic-poller-announce poller (not was-live))))))
+      (setf (supersonic-poller-in-flight poller) nil)
+      (aio-resolve done #'ignore))
+    (when then
+      (aio-await (funcall then)))))
 
 (defun supersonic-poller--tick (poller)
   "Poll POLLER's player, unless a poll is still waiting for its answer.
@@ -211,14 +210,13 @@ and wants the facade's hooks to show it now.  See
   (setf (supersonic-poller-snapshot poller) snapshot)
   (supersonic-poller-announce poller))
 
-(aio-defun
- supersonic-poller-finish-seek (poller)
- "Poll POLLER's player for where a seek landed, then say it moved.
+(aio-defun supersonic-poller-finish-seek (poller)
+  "Poll POLLER's player for where a seek landed, then say it moved.
 The position-change hook is for the sudden jump of a seek, which only
 whoever asked for the seek can tell apart from a position that crept
 on between polls -- see `supersonic-poller-announce'."
- (aio-await (supersonic-poller-poll poller))
- (run-hooks 'supersonic-playback-position-change-hook))
+  (aio-await (supersonic-poller-poll poller))
+  (run-hooks 'supersonic-playback-position-change-hook))
 
 (defun supersonic-poller-position (snapshot playing &optional duration)
   "Return SNAPSHOT's `:position', counted on to now if PLAYING.

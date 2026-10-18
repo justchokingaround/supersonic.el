@@ -189,16 +189,16 @@ sending PropertiesChanged itself."
 ;;; Following the playback facade
 ;;;
 
-(aio-defun
- supersonic-mpris--fetch-song (id) "Fetch metadata for track ID, then re-announce Metadata."
- (condition-case err
-     (let ((song (aio-await (supersonic-provider-track id))))
-       ;; Ignore replies for a track we have since moved on from.
-       (when (equal id supersonic-mpris--track-id)
-         (setq supersonic-mpris--track-song song)
-         (supersonic-mpris--announce-metadata)))
-   (error
-    (message "supersonic-mpris: failed to fetch metadata for %s: %s" id err))))
+(aio-defun supersonic-mpris--fetch-song (id)
+  "Fetch metadata for track ID, then re-announce Metadata."
+  (condition-case err
+      (let ((song (aio-await (supersonic-provider-track id))))
+        ;; Ignore replies for a track we have since moved on from.
+        (when (equal id supersonic-mpris--track-id)
+          (setq supersonic-mpris--track-song song)
+          (supersonic-mpris--announce-metadata)))
+    (error
+     (message "supersonic-mpris: failed to fetch metadata for %s: %s" id err))))
 
 (defun supersonic-mpris--set-playback-status (status)
   "Record STATUS (\"Playing\", \"Paused\" or \"Stopped\") and announce it."
@@ -206,35 +206,34 @@ sending PropertiesChanged itself."
     (setq supersonic-mpris--playback-status status)
     (supersonic-mpris--set-player-property "PlaybackStatus" status)))
 
-(aio-defun
- supersonic-mpris--sync ()
- "Pull the active backend's current track and play state and announce them.
+(aio-defun supersonic-mpris--sync ()
+  "Pull the active backend's current track and play state and announce them.
 On both `supersonic-playback-track-change-hook' and
 `supersonic-playback-state-change-hook', which carry no payload.  One
 handler for both, since a track change can flip Playing/Paused too
 \(mpv unpauses itself as it loads a fresh queue)."
- (if (supersonic-playback-live-p)
-     (let* ((id-promise (supersonic-playback-status 'track-id))
-            (paused-promise (supersonic-playback-status 'paused))
-            (id (aio-await id-promise))
-            (paused (aio-await paused-promise)))
-       (supersonic-mpris--set-playback-status
-        (if paused
-            "Paused"
-          "Playing"))
-       (unless (equal id supersonic-mpris--track-id)
-         (setq supersonic-mpris--track-id id)
-         (setq supersonic-mpris--track-song nil)
-         (supersonic-mpris--announce-metadata)
-         (when id
-           ;; Defer off whatever called us -- for the mpv backend, its own
-           ;; IPC process filter -- so a slow HTTP request never blocks it.
-           (run-at-time 0 nil #'supersonic-mpris--fetch-song id))))
-   (supersonic-mpris--set-playback-status "Stopped")
-   (when supersonic-mpris--track-id
-     (setq supersonic-mpris--track-id nil)
-     (setq supersonic-mpris--track-song nil)
-     (supersonic-mpris--announce-metadata))))
+  (if (supersonic-playback-live-p)
+      (let* ((id-promise (supersonic-playback-status 'track-id))
+             (paused-promise (supersonic-playback-status 'paused))
+             (id (aio-await id-promise))
+             (paused (aio-await paused-promise)))
+        (supersonic-mpris--set-playback-status
+         (if paused
+             "Paused"
+           "Playing"))
+        (unless (equal id supersonic-mpris--track-id)
+          (setq supersonic-mpris--track-id id)
+          (setq supersonic-mpris--track-song nil)
+          (supersonic-mpris--announce-metadata)
+          (when id
+            ;; Defer off whatever called us -- for the mpv backend, its own
+            ;; IPC process filter -- so a slow HTTP request never blocks it.
+            (run-at-time 0 nil #'supersonic-mpris--fetch-song id))))
+    (supersonic-mpris--set-playback-status "Stopped")
+    (when supersonic-mpris--track-id
+      (setq supersonic-mpris--track-id nil)
+      (setq supersonic-mpris--track-song nil)
+      (supersonic-mpris--announce-metadata))))
 
 ;;;
 ;;; org.mpris.MediaPlayer2 (root interface)
@@ -249,20 +248,19 @@ handler for both, since a track change can flip Playing/Paused too
 ;;; org.mpris.MediaPlayer2.Player
 ;;;
 
-(aio-defun
- supersonic-mpris--play ()
- "Handle the MPRIS Play method.
+(aio-defun supersonic-mpris--play ()
+  "Handle the MPRIS Play method.
 Play means resume, not toggle, so this only toggles when paused."
- (if (supersonic-playback-live-p)
-     (when (aio-await (supersonic-playback-status 'paused))
-       (supersonic-playback-toggle-play))
-   (message "supersonic-mpris: nothing to play, start playback from Emacs first")))
+  (if (supersonic-playback-live-p)
+      (when (aio-await (supersonic-playback-status 'paused))
+        (supersonic-playback-toggle-play))
+    (message "supersonic-mpris: nothing to play, start playback from Emacs first")))
 
-(aio-defun
- supersonic-mpris--pause () "Handle the MPRIS Pause method.  The mirror image of `supersonic-mpris--play'."
- (when (supersonic-playback-live-p)
-   (unless (aio-await (supersonic-playback-status 'paused))
-     (supersonic-playback-toggle-play))))
+(aio-defun supersonic-mpris--pause ()
+  "Handle the MPRIS Pause method.  The mirror image of `supersonic-mpris--play'."
+  (when (supersonic-playback-live-p)
+    (unless (aio-await (supersonic-playback-status 'paused))
+      (supersonic-playback-toggle-play))))
 
 (defun supersonic-mpris--play-pause ()
   "Handle the MPRIS PlayPause method."

@@ -179,70 +179,59 @@ For a command to call before prompting or opening a buffer."
 ;; that is missing or cannot do OPERATION rejects the promise the
 ;; caller awaits instead of signalling synchronously at the call site.
 
-(aio-defun
- supersonic-provider-artists ()
- "Return a promise resolving to every artist in the active provider's library."
- (aio-await (supersonic-provider--call 'artists)))
+(aio-defun supersonic-provider-artists ()
+  "Return a promise resolving to every artist in the active provider's library."
+  (aio-await (supersonic-provider--call 'artists)))
 
-(aio-defun
- supersonic-provider-artist-albums (artist-id)
- "Return a promise resolving to the albums of the artist with ARTIST-ID."
- (aio-await (supersonic-provider--call 'artist-albums artist-id)))
+(aio-defun supersonic-provider-artist-albums (artist-id)
+  "Return a promise resolving to the albums of the artist with ARTIST-ID."
+  (aio-await (supersonic-provider--call 'artist-albums artist-id)))
 
-(aio-defun
- supersonic-provider-album-list (type count)
- "Return a promise resolving to at most COUNT albums of list TYPE.
+(aio-defun supersonic-provider-album-list (type count)
+  "Return a promise resolving to at most COUNT albums of list TYPE.
 TYPE is one of `supersonic-provider-album-list-types'."
- (unless (memq type supersonic-provider-album-list-types)
-   (error "Unknown album list type `%s'" type))
- (aio-await (supersonic-provider--call 'album-list type count)))
+  (unless (memq type supersonic-provider-album-list-types)
+    (error "Unknown album list type `%s'" type))
+  (aio-await (supersonic-provider--call 'album-list type count)))
 
-(aio-defun
- supersonic-provider-album-tracks (album-id)
- "Return a promise resolving to the tracks of the album with ALBUM-ID."
- (aio-await (supersonic-provider--call 'album-tracks album-id)))
+(aio-defun supersonic-provider-album-tracks (album-id)
+  "Return a promise resolving to the tracks of the album with ALBUM-ID."
+  (aio-await (supersonic-provider--call 'album-tracks album-id)))
 
-(aio-defun
- supersonic-provider-track (track-id)
- "Return a promise resolving to the track with TRACK-ID."
- (aio-await (supersonic-provider--call 'track track-id)))
+(aio-defun supersonic-provider-track (track-id)
+  "Return a promise resolving to the track with TRACK-ID."
+  (aio-await (supersonic-provider--call 'track track-id)))
 
-(aio-defun
- supersonic-provider-search (query)
- "Return a promise resolving to the active provider's results for QUERY.
+(aio-defun supersonic-provider-search (query)
+  "Return a promise resolving to the active provider's results for QUERY.
 The result is a plist (:artists ARTISTS :albums ALBUMS :tracks TRACKS)."
- (aio-await (supersonic-provider--call 'search query)))
+  (aio-await (supersonic-provider--call 'search query)))
 
-(aio-defun
- supersonic-provider-podcasts ()
- "Return a promise resolving to every podcast channel subscribed to."
- (aio-await (supersonic-provider--call 'podcasts)))
+(aio-defun supersonic-provider-podcasts ()
+  "Return a promise resolving to every podcast channel subscribed to."
+  (aio-await (supersonic-provider--call 'podcasts)))
 
-(aio-defun
- supersonic-provider-podcast-episodes (channel-id)
- "Return a promise resolving to the episodes of podcast channel CHANNEL-ID."
- (aio-await (supersonic-provider--call 'podcast-episodes channel-id)))
+(aio-defun supersonic-provider-podcast-episodes (channel-id)
+  "Return a promise resolving to the episodes of podcast channel CHANNEL-ID."
+  (aio-await (supersonic-provider--call 'podcast-episodes channel-id)))
 
-(aio-defun
- supersonic-provider-add-podcast (url)
- "Return a promise resolving once the podcast feed at URL is subscribed to."
- (aio-await (supersonic-provider--call 'add-podcast url)))
+(aio-defun supersonic-provider-add-podcast (url)
+  "Return a promise resolving once the podcast feed at URL is subscribed to."
+  (aio-await (supersonic-provider--call 'add-podcast url)))
 
-(aio-defun
- supersonic-provider-download-podcast-episode (episode-id)
- "Return a promise resolving once EPISODE-ID's download has been started."
- (aio-await (supersonic-provider--call 'download-podcast-episode episode-id)))
+(aio-defun supersonic-provider-download-podcast-episode (episode-id)
+  "Return a promise resolving once EPISODE-ID's download has been started."
+  (aio-await (supersonic-provider--call 'download-podcast-episode episode-id)))
 
-(aio-defun
- supersonic-provider-stream-url (track-id &optional format)
- "Return a promise resolving to a URL to stream the track with TRACK-ID from.
+(aio-defun supersonic-provider-stream-url (track-id &optional format)
+  "Return a promise resolving to a URL to stream the track with TRACK-ID from.
 The URL may carry credentials -- keep it off any subprocess's command
 line.  FORMAT is as `supersonic-provider-operations' documents for
 `stream-url', and is only passed on when non-nil."
- (aio-await
-  (if format
-      (supersonic-provider--call 'stream-url track-id format)
-    (supersonic-provider--call 'stream-url track-id))))
+  (aio-await
+   (if format
+       (supersonic-provider--call 'stream-url track-id format)
+     (supersonic-provider--call 'stream-url track-id))))
 
 (defun supersonic-provider-scrobble (track-id &optional now-playing)
   "Scrobble TRACK-ID, as now playing if NOW-PLAYING is non-nil.
@@ -257,18 +246,16 @@ failure is reported in the echo area."
        (message "[Supersonic] Failed to scrobble: %s" (error-message-string err))))
     nil))
 
-(aio-defun
- supersonic-provider-cover-art (art size)
- "Return a promise resolving to the bytes of cover art ART at about SIZE pixels.
+(aio-defun supersonic-provider-cover-art (art size)
+  "Return a promise resolving to the bytes of cover art ART at about SIZE pixels.
 ART is an item's `:art' reference, never the item's own id."
- (aio-await (supersonic-provider--call 'cover-art art size)))
+  (aio-await (supersonic-provider--call 'cover-art art size)))
 
-(aio-defun
- supersonic-provider-cover-art-url (art size)
- "Return a promise resolving to a URL for cover art ART at about SIZE pixels.
+(aio-defun supersonic-provider-cover-art-url (art size)
+  "Return a promise resolving to a URL for cover art ART at about SIZE pixels.
 ART is an item's `:art' reference, never the item's own id.  The URL
 may carry credentials, as `supersonic-provider-stream-url''s may."
- (aio-await (supersonic-provider--call 'cover-art-url art size)))
+  (aio-await (supersonic-provider--call 'cover-art-url art size)))
 
 (defun supersonic-provider-cache-name (id)
   "Return a file name for ID that is safe, bounded and unique to the library.

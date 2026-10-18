@@ -439,9 +439,8 @@ hit."
         (supersonic-waveform--transcode-when-streamable id buckets cache-file job)
         nil)))))
 
-(aio-defun
- supersonic-waveform--transcode-when-streamable (id buckets cache-file job)
- "Transcode track ID for JOB once the provider has named its stream URL.
+(aio-defun supersonic-waveform--transcode-when-streamable (id buckets cache-file job)
+  "Transcode track ID for JOB once the provider has named its stream URL.
 BUCKETS and CACHE-FILE are passed on to
 `supersonic-waveform--start-transcode'.  The URL arrives
 asynchronously, so JOB may no longer be `supersonic-waveform--job' by
@@ -450,21 +449,21 @@ spawned for it in that case, and its callback is called with nil, the
 same as a transcode cancelled while running would.  A failure to get
 the URL or to start the transcode is reported and likewise ends in
 nil."
- (condition-case err
-     (let ((url (aio-await (supersonic-provider-stream-url id))))
-       (if (eq job supersonic-waveform--job)
-           (supersonic-waveform--start-transcode url buckets cache-file job)
-         (funcall (plist-get job :callback) nil)))
-   (error
-    ;; Cancel on the way out: `supersonic-waveform--start-transcode' can
-    ;; fail with the process already spawned (writing the URL to a
-    ;; process that died on the spot), and a job left behind with nothing
-    ;; running would have the next call for this same track re-point it
-    ;; and then wait on it forever.
-    (when (eq job supersonic-waveform--job)
-      (supersonic-waveform-cancel)
-      (message "[Supersonic] Failed to start waveform generation: %s" (error-message-string err)))
-    (funcall (plist-get job :callback) nil))))
+  (condition-case err
+      (let ((url (aio-await (supersonic-provider-stream-url id))))
+        (if (eq job supersonic-waveform--job)
+            (supersonic-waveform--start-transcode url buckets cache-file job)
+          (funcall (plist-get job :callback) nil)))
+    (error
+     ;; Cancel on the way out: `supersonic-waveform--start-transcode' can
+     ;; fail with the process already spawned (writing the URL to a
+     ;; process that died on the spot), and a job left behind with nothing
+     ;; running would have the next call for this same track re-point it
+     ;; and then wait on it forever.
+     (when (eq job supersonic-waveform--job)
+       (supersonic-waveform-cancel)
+       (message "[Supersonic] Failed to start waveform generation: %s" (error-message-string err)))
+     (funcall (plist-get job :callback) nil))))
 
 ;;;
 ;;; Rendering
