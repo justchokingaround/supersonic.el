@@ -388,6 +388,27 @@ nothing until the next list or search is rejected too.
 
 Everything below works the same with every provider and backend.
 
+### The library browser
+
+`supersonic-browse` (`h` in the prefix map) opens *supersonic*, one
+buffer to find music in, browsed like a web page:
+
+- **Home**: rows of albums to pick from -- jump back in, on repeat,
+  fresh in your library, rediscover, favourites (see
+  `supersonic-browse-home-sections`) -- and a *Surprise me* button.
+- **Artists** and **album lists**: grids of cover art that fill the
+  window and reflow with it; artists round, albums square, and a tile
+  of its own colour with initials for anything without art.
+- **An artist or an album**: a header with its art and play, shuffle
+  and queue buttons, over its albums or tracks.
+- **Search** (`/`): matching artists, albums and songs.
+
+The same keys work on every page: arrows or `n`/`p` move, `TAB`
+jumps to the next section, `RET` opens (or plays from the track at
+point), `P` plays, `s` shuffles, `a` queues, `l`/`r` go back and
+forward, `h` home, `g` reloads.  The trail at the top is clickable,
+and so is everything else.
+
 ### Keys
 
 `supersonic-command-map` holds the commands used most, for binding to

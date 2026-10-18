@@ -576,5 +576,119 @@ is set."
   :type 'boolean
   :group 'supersonic-local)
 
+;;;; The library browser
+
+(defgroup supersonic-browse nil
+  "The visual library browser, `supersonic-browse'."
+  :group 'supersonic)
+
+(defcustom supersonic-browse-tile-size 168
+  "Size in pixels of the cover tiles in the library browser."
+  :type 'integer
+  :group 'supersonic-browse)
+
+(defcustom supersonic-browse-hero-size 232
+  "Size in pixels of the art in an artist or album page's header."
+  :type 'integer
+  :group 'supersonic-browse)
+
+(defcustom supersonic-browse-gap 28
+  "Pixels between the cover tiles of the library browser."
+  :type 'integer
+  :group 'supersonic-browse)
+
+(defcustom supersonic-browse-margin 40
+  "Pixels of margin left and right of the library browser's pages."
+  :type 'integer
+  :group 'supersonic-browse)
+
+(defcustom supersonic-browse-home-sections
+  '((recent . "Jump back in")
+    (frequent . "On repeat")
+    (newest . "Fresh in your library")
+    (random . "Rediscover")
+    (starred . "Favourites"))
+  "The rows of the browser's home page, as (TYPE . TITLE).
+TYPE is an album list type, see `supersonic-provider-album-list-types';
+a row the provider cannot fill, or that is empty, is left out."
+  :type '(alist :key-type symbol :value-type string)
+  :group 'supersonic-browse)
+
+(defcustom supersonic-browse-section-count 16
+  "Albums asked for per row of the browser's home page."
+  :type 'integer
+  :group 'supersonic-browse)
+
+(defface supersonic-browse-greeting
+  '((t :inherit bold :height 2.0))
+  "Face of the browser's page titles."
+  :group 'supersonic-browse)
+
+(defface supersonic-browse-heading
+  '((t :inherit bold :height 1.3))
+  "Face of the section headings in the browser."
+  :group 'supersonic-browse)
+
+(defface supersonic-browse-accent
+  '((t :inherit link :underline nil))
+  "Face whose foreground is the browser's accent colour."
+  :group 'supersonic-browse)
+
+(defface supersonic-browse-link
+  '((t :inherit supersonic-browse-accent))
+  "Face of links such as \"See all\" in the browser."
+  :group 'supersonic-browse)
+
+(defface supersonic-browse-button
+  '((t :inherit (supersonic-browse-accent header-line) :weight bold
+      :box (:line-width (14 . 7) :style flat-button)))
+  "Face of the browser's text buttons."
+  :group 'supersonic-browse)
+
+(defface supersonic-browse-tile-title
+  '((t :inherit default))
+  "Face of the name under a cover tile."
+  :group 'supersonic-browse)
+
+(defface supersonic-browse-tile-subtitle
+  '((t :inherit shadow :height 0.9))
+  "Face of the line under a cover tile's name."
+  :group 'supersonic-browse)
+
+(defface supersonic-browse-track
+  '((t :inherit default))
+  "Face of a track's title in the browser."
+  :group 'supersonic-browse)
+
+(defface supersonic-browse-track-number
+  '((t :inherit shadow))
+  "Face of track numbers and durations in the browser."
+  :group 'supersonic-browse)
+
+(defface supersonic-browse-playing
+  '((t :inherit supersonic-browse-accent :weight bold))
+  "Face of the track playing, in the browser."
+  :group 'supersonic-browse)
+
+(defface supersonic-browse-focus
+  '((t :inherit hl-line :extend t))
+  "Face of the track row in focus, in the browser."
+  :group 'supersonic-browse)
+
+(defface supersonic-browse-trail
+  '((t :inherit shadow))
+  "Face of the pages in the browser's trail."
+  :group 'supersonic-browse)
+
+(defface supersonic-browse-trail-current
+  '((t :inherit bold))
+  "Face of the current page in the browser's trail."
+  :group 'supersonic-browse)
+
+(defface supersonic-browse-hint
+  '((t :inherit shadow))
+  "Face of the key hints in the browser."
+  :group 'supersonic-browse)
+
 (provide 'supersonic-custom)
 ;;; supersonic-custom.el ends here

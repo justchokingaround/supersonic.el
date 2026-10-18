@@ -57,6 +57,10 @@
 
 (declare-function supersonic-lyrics "supersonic-lyrics")
 (declare-function supersonic-local-toggle "supersonic-local")
+(declare-function supersonic-browse "supersonic-browse")
+(declare-function supersonic-browse-artists "supersonic-browse")
+(declare-function supersonic-browse-album-list "supersonic-browse")
+(declare-function supersonic-browse-search "supersonic-browse")
 (declare-function supersonic-lyrics-toggle-echo-area "supersonic-lyrics")
 (declare-function supersonic-lyrics-toggle-translation "supersonic-lyrics")
 
@@ -193,10 +197,12 @@ binds itself afterwards win."
     (define-key map (kbd "q") #'supersonic-show-queue)
     (define-key map (kbd "s") #'supersonic-search-read)
     (define-key map (kbd "S") #'supersonic-search)
-    (define-key map (kbd "a") #'supersonic-artists)
-    (define-key map (kbd "r") #'supersonic-random-albums)
-    (define-key map (kbd "e") #'supersonic-recent-albums)
-    (define-key map (kbd "w") #'supersonic-newest-albums)
+    (define-key map (kbd "h") #'supersonic-browse)
+    (define-key map (kbd "a") #'supersonic-browse-artists)
+    (define-key map (kbd "r") (lambda () (interactive) (supersonic-browse-album-list 'random)))
+    (define-key map (kbd "e") (lambda () (interactive) (supersonic-browse-album-list 'recent)))
+    (define-key map (kbd "w") (lambda () (interactive) (supersonic-browse-album-list 'newest)))
+    (define-key map (kbd "/") #'supersonic-browse-search)
     (define-key map (kbd "P") #'supersonic-podcasts)
     (define-key map (kbd "k") #'supersonic-playback-switch-backend)
     (define-key map (kbd "m") #'supersonic)
@@ -2131,6 +2137,7 @@ provider is missing."
 (transient-define-prefix
  supersonic () "Help transient for supersonic."
  [["Supersonic"
+   ("h" "Library (browser)" supersonic-browse)
    ("a" "Artists" supersonic-artists :if supersonic--offer-artists-p)
    ("e" "Recent Albums" supersonic-recent-albums :if supersonic--offer-album-list-p)
    ("r" "Random Albums" supersonic-random-albums :if supersonic--offer-album-list-p)

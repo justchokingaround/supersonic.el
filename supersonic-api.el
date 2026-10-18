@@ -109,12 +109,15 @@ longer waited for still holds a file descriptor open (#70)."
          (timer nil)
          (buffer
           (condition-case err
-              (url-retrieve url
+              ;; Requests run in the background; url-http's "Contacting
+              ;; host" would flash in the echo area for every one.
+              (let ((inhibit-message t))
+                (url-retrieve url
                             (lambda (status)
                               (when timer
                                 (cancel-timer timer))
                               (let ((value (cons status (current-buffer))))
-                                (aio-resolve promise (lambda () value)))))
+                                (aio-resolve promise (lambda () value))))))
             (error (aio-resolve promise (lambda () (signal (car err) (cdr err))))
                    nil))))
     ;; `url-retrieve' calls back before returning for some URLs (and

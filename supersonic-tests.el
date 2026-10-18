@@ -8829,6 +8829,59 @@ answer of nil marks the lyrics as needing none, so it is not asked again."
           (should-not (supersonic-local--load-index)))
       (delete-directory supersonic-cache-path t))))
 
+(ert-deftest supersonic-tests-browse-formatting ()
+  "Durations, totals, counts and initials read the way the browser shows them."
+  (require 'supersonic-browse)
+  (should (equal "3:10" (supersonic-browse--duration 190)))
+  (should (equal "1:02:05" (supersonic-browse--duration 3725)))
+  (should (equal "" (supersonic-browse--duration nil)))
+  (should (equal "41 min" (supersonic-browse--total 2460)))
+  (should (equal "1 h 5 min" (supersonic-browse--total 3900)))
+  (should (equal "1 album" (supersonic-browse--plural 1 "album")))
+  (should (equal "7 albums" (supersonic-browse--plural 7 "album")))
+  (should (equal "JC" (supersonic-browse--initials "Jonathan Coulton")))
+  (should (equal "К" (supersonic-browse--initials "Кино")))
+  (should (equal "AH" (supersonic-browse--initials "A - ha"))))
+
+(ert-deftest supersonic-tests-browse-placeholder-colour-is-stable ()
+  "A tile without art gets the same colour for the same name every time."
+  (require 'supersonic-browse)
+  (should (= (supersonic-browse--hue "Tally Hall") (supersonic-browse--hue "Tally Hall")))
+  (should (<= 0 (supersonic-browse--hue "x") 1))
+  (should (string-match-p "\\`#[0-9a-f]\\{6\\}\\'" (supersonic-browse--hsl 0.5 0.5 0.5))))
+
+(ert-deftest supersonic-tests-browse-subtitles ()
+  "Tiles say what matters where they are: an artist's album count, an
+album's artist and year, and on an artist's page an album's year and size."
+  (require 'supersonic-browse)
+  (with-temp-buffer
+    (should (equal "2 albums" (supersonic-browse--subtitle '(:name "A" :album-count 2))))
+    (should (equal "Oasis · 1995" (supersonic-browse--subtitle '(:name "M" :artist "Oasis" :year 1995))))
+    (setq supersonic-browse--page '(:kind artist))
+    (should (equal "1995 · 12 songs" (supersonic-browse--subtitle '(:name "M" :artist "Oasis" :year 1995 :song-count 12))))))
+
+(ert-deftest supersonic-tests-browse-history ()
+  "Visiting pages builds a history that back and forward walk, keeping focus."
+  (require 'supersonic-browse)
+  (cl-letf (((symbol-function 'supersonic-browse--load) #'ignore)
+            ((symbol-function 'pop-to-buffer-same-window) #'ignore))
+    (unwind-protect
+        (progn
+          (supersonic-browse-visit '(:kind home))
+          (with-current-buffer supersonic-browse-buffer-name
+            (setq supersonic-browse--selected '(album "a1")))
+          (supersonic-browse-visit '(:kind artists))
+          (supersonic-browse-visit '(:kind album :id "a1"))
+          (with-current-buffer supersonic-browse-buffer-name
+            (should (eq 'album (plist-get supersonic-browse--page :kind)))
+            (supersonic-browse-back 2)
+            (should (eq 'home (plist-get supersonic-browse--page :kind)))
+            (should (equal '(album "a1") supersonic-browse--selected))
+            (supersonic-browse-forward)
+            (should (eq 'artists (plist-get supersonic-browse--page :kind)))
+            (should-error (progn (supersonic-browse-forward) (supersonic-browse-forward)) :type 'user-error)))
+      (kill-buffer supersonic-browse-buffer-name))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here
