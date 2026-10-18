@@ -51,6 +51,10 @@
   (let ((map (make-sparse-keymap)))
     (define-key map [mode-line mouse-1] #'supersonic-show-now-playing)
     (define-key map [mode-line mouse-3] #'supersonic-toggle-playing)
+    ;; For a header line showing `supersonic-mode-line-string', as some
+    ;; mode-line packages draw their bar there.
+    (define-key map [header-line mouse-1] #'supersonic-show-now-playing)
+    (define-key map [header-line mouse-3] #'supersonic-toggle-playing)
     map)
   "Keymap active on the mode-line indicator.")
 
