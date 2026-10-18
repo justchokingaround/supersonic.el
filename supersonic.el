@@ -151,6 +151,54 @@ your own -- a \"Genre:\" row, say -- inserts its row alongside."
   :group 'supersonic)
 
 ;;;
+;;; Keymaps
+;;;
+
+(defun supersonic--define-common-keys (map)
+  "Bind the playback keys every supersonic buffer shares into MAP.
+Each mode keeps its own map (its parent being the one its parent mode
+gives it), so these are copied in rather than inherited.  Keys a mode
+binds itself afterwards win."
+  (define-key map (kbd "SPC") #'supersonic-toggle-playing)
+  (define-key map (kbd ">") #'supersonic-skip-track)
+  (define-key map (kbd "<") #'supersonic-prev-track)
+  (define-key map (kbd "]") #'supersonic-seek-forward)
+  (define-key map (kbd "[") #'supersonic-seek-back)
+  (define-key map (kbd "/") #'supersonic-search-read)
+  (define-key map (kbd "N") #'supersonic-show-now-playing)
+  (define-key map (kbd "Q") #'supersonic-show-queue)
+  (define-key map (kbd "M") #'supersonic)
+  map)
+
+;;;###autoload (autoload 'supersonic-command-map "supersonic" nil t 'keymap)
+(defvar supersonic-command-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "SPC") #'supersonic-toggle-playing)
+    (define-key map (kbd "n") #'supersonic-skip-track)
+    (define-key map (kbd "p") #'supersonic-prev-track)
+    (define-key map (kbd "f") #'supersonic-seek-forward)
+    (define-key map (kbd "b") #'supersonic-seek-back)
+    (define-key map (kbd "o") #'supersonic-show-now-playing)
+    (define-key map (kbd "q") #'supersonic-show-queue)
+    (define-key map (kbd "s") #'supersonic-search-read)
+    (define-key map (kbd "S") #'supersonic-search)
+    (define-key map (kbd "a") #'supersonic-artists)
+    (define-key map (kbd "r") #'supersonic-random-albums)
+    (define-key map (kbd "e") #'supersonic-recent-albums)
+    (define-key map (kbd "w") #'supersonic-newest-albums)
+    (define-key map (kbd "P") #'supersonic-podcasts)
+    (define-key map (kbd "k") #'supersonic-playback-switch-backend)
+    (define-key map (kbd "m") #'supersonic)
+    map)
+  "Prefix keymap of supersonic's commands, for binding to a key of your own.
+For example:
+
+  (global-set-key (kbd \"C-c m\") \\='supersonic-command-map)
+
+\\{supersonic-command-map}")
+(fset 'supersonic-command-map supersonic-command-map)
+
+;;;
 ;;; List buffers
 ;;;
 
@@ -442,7 +490,7 @@ unless the entry brings its `:track' along; a failed lookup shows as
   (supersonic-queue-fetch-and-render (current-buffer)))
 
 (defvar supersonic-queue-mode-map
-  (let ((map (make-sparse-keymap)))
+  (let ((map (supersonic--define-common-keys (make-sparse-keymap))))
     (define-key map (kbd "g") #'supersonic-queue-refresh)
     map)
   "Keymap for `supersonic-queue-mode'.")
@@ -1288,7 +1336,7 @@ seekbar fills in as analysis goes."
   (supersonic-now-playing-fetch-and-render (current-buffer)))
 
 (defvar supersonic-now-playing-mode-map
-  (let ((map (make-sparse-keymap)))
+  (let ((map (supersonic--define-common-keys (make-sparse-keymap))))
     (define-key map (kbd "g") #'supersonic-now-playing-refresh)
     (define-key map (kbd "SPC") #'supersonic-toggle-playing)
     (define-key map (kbd "n") #'supersonic-skip-track)
@@ -1377,7 +1425,7 @@ id is (ID . TYPE), TYPE being \"artist\", \"album\" or \"song\", so
   (supersonic-open-search-appropriate-result (tabulated-list-get-id)))
 
 (defvar supersonic-search-mode-map
-  (let ((map (make-sparse-keymap)))
+  (let ((map (supersonic--define-common-keys (make-sparse-keymap))))
     (define-key map (kbd "RET") #'supersonic-open-search-result)
     map)
   "Keymap for `supersonic-search-mode'.")
@@ -1390,6 +1438,77 @@ id is (ID . TYPE), TYPE being \"artist\", \"album\" or \"song\", so
     (supersonic--init-list-buffer new-buff #'supersonic-search-mode "Searching...")
     (ignore (supersonic-search-refresh (read-string "Query: ") new-buff))
     (pop-to-buffer-same-window new-buff)))
+
+(defun supersonic--search-candidates (results)
+  "Turn search RESULTS into an alist of (CANDIDATE . (ID . TYPE)).
+RESULTS is as resolved by `supersonic-provider-search'; (ID . TYPE) is
+what `supersonic-open-search-appropriate-result' takes.  CANDIDATE
+carries its type as the `supersonic-type' text property, for grouping."
+  (let ((candidates nil)
+        (seen (make-hash-table :test #'equal)))
+    (cl-flet ((add (type label id)
+                ;; Two results may print the same, e.g. one song on
+                ;; two albums; tell them apart rather than drop one.
+                (let ((candidate label)
+                      (n 1))
+                  (while (gethash candidate seen)
+                    (setq n (1+ n)
+                          candidate (format "%s <%d>" label n)))
+                  (puthash candidate t seen)
+                  (push (cons (propertize candidate 'supersonic-type type) (cons id type)) candidates))))
+      (dolist (artist (plist-get results :artists))
+        (add "artist" (or (plist-get artist :name) "") (plist-get artist :id)))
+      (dolist (album (plist-get results :albums))
+        (add "album"
+             (string-join (delq nil (list (plist-get album :name) (plist-get album :artist))) " — ")
+             (plist-get album :id)))
+      (dolist (track (plist-get results :tracks))
+        (add "song"
+             (string-join
+              (delq nil (list (plist-get track :title) (plist-get track :artist) (plist-get track :album)))
+              " — ")
+             (plist-get track :id))))
+    (nreverse candidates)))
+
+(defun supersonic--search-group (candidate transform)
+  "Group CANDIDATE by its result type, or return it as is if TRANSFORM."
+  (if transform
+      candidate
+    (pcase (get-text-property 0 'supersonic-type candidate)
+      ("artist" "Artists")
+      ("album" "Albums")
+      (_ "Songs"))))
+
+;;;###autoload
+(defun supersonic-search-read (query &optional enqueue)
+  "Search the library for QUERY and act on one result picked in the minibuffer.
+A song is played, an album's tracks and an artist's albums are opened.
+With a prefix argument ENQUEUE, a song or a whole album is added to the
+play queue instead."
+  (interactive (list (read-string "Search music: ") current-prefix-arg))
+  (supersonic-provider-require 'search)
+  (let* ((candidates (supersonic--search-candidates
+                      (aio-wait-for (supersonic-provider-search query))))
+         (table (lambda (string pred action)
+                  (if (eq action 'metadata)
+                      `(metadata (category . supersonic)
+                                 (group-function . supersonic--search-group)
+                                 (display-sort-function . identity))
+                    (complete-with-action action candidates string pred)))))
+    (unless candidates
+      (user-error "No results for %s" query))
+    (let* ((result (cdr (assoc (completing-read (format "Results for %s: " query) table nil t) candidates)))
+           (id (car result))
+           (type (cdr result)))
+      (cond
+       ((and enqueue (string-equal type "song"))
+        (supersonic-playback-enqueue (list id))
+        (message "Added 1 track to the queue"))
+       ((and enqueue (string-equal type "album"))
+        (let ((ids (aio-wait-for (supersonic-get-album-track-ids id))))
+          (supersonic-playback-enqueue ids)
+          (message "Added %d track(s) to the queue" (length ids))))
+       (t (supersonic-open-search-appropriate-result result))))))
 
 (define-derived-mode
  supersonic-search-mode
@@ -1454,7 +1573,7 @@ entry at point.  An ID that isn't in the list at all yields nil."
     (message "Added %d track(s) to the queue" (length ids))))
 
 (defvar supersonic-tracks-mode-map
-  (let ((map (make-sparse-keymap)))
+  (let ((map (supersonic--define-common-keys (make-sparse-keymap))))
     (define-key map (kbd "RET") #'supersonic-play-tracks)
     (define-key map (kbd "a") #'supersonic-enqueue-tracks)
     map)
@@ -1549,14 +1668,14 @@ TYPE is one of `supersonic-provider-album-list-types'."
     (message "Added %d track(s) to the queue" (length ids)))))
 
 (defvar supersonic-album-mode-map
-  (let ((map (make-sparse-keymap)))
+  (let ((map (supersonic--define-common-keys (make-sparse-keymap))))
     (define-key map (kbd "RET") #'supersonic-open-tracks)
     (define-key map (kbd "a") #'supersonic-enqueue-album)
     map)
   "Keymap for `supersonic-album-mode'.")
 
 (defvar supersonic-album-type-mode-map
-  (let ((map (make-sparse-keymap)))
+  (let ((map (supersonic--define-common-keys (make-sparse-keymap))))
     (define-key map (kbd "RET") #'supersonic-open-tracks)
     (define-key map (kbd "a") #'supersonic-enqueue-album)
     map)
@@ -1652,7 +1771,7 @@ the list has no Art column, see `supersonic-artists-format'."
   (supersonic-artists-refresh (current-buffer)))
 
 (defvar supersonic-artist-mode-map
-  (let ((map (make-sparse-keymap)))
+  (let ((map (supersonic--define-common-keys (make-sparse-keymap))))
     (define-key map (kbd "RET") #'supersonic-open-album)
     (define-key map (kbd "g") #'supersonic-artists-revert)
     map)
@@ -1737,7 +1856,7 @@ has no podcasts to subscribe to, which is reported before asking."
   ("RET" "Open a podcast" supersonic-open-podcast-episodes :if supersonic--offer-podcast-episodes-p)])
 
 (defvar supersonic-podcast-mode-map
-  (let ((map (make-sparse-keymap)))
+  (let ((map (supersonic--define-common-keys (make-sparse-keymap))))
     (define-key map (kbd "RET") #'supersonic-open-podcast-episodes)
     (define-key map (kbd "?") #'supersonic-podcast-help)
     (define-key map (kbd "a") #'supersonic-add-podcast)
@@ -1817,7 +1936,7 @@ EPISODES is as resolved by `supersonic-provider-podcast-episodes'."
 
 
 (defvar supersonic-podcast-episodes-mode-map
-  (let ((map (make-sparse-keymap)))
+  (let ((map (supersonic--define-common-keys (make-sparse-keymap))))
     (define-key map (kbd "?") #'supersonic-podcast-episode-help)
     (define-key map (kbd "RET") #'supersonic-play-podcast)
     (define-key map (kbd "d") #'supersonic-download-podcast-episode)
@@ -1950,7 +2069,8 @@ provider is missing."
    ("e" "Recent Albums" supersonic-recent-albums :if supersonic--offer-album-list-p)
    ("r" "Random Albums" supersonic-random-albums :if supersonic--offer-album-list-p)
    ("n" "Newest Albums" supersonic-newest-albums :if supersonic--offer-album-list-p)
-   ("s" "Search" supersonic-search :if supersonic--offer-search-p)
+   ("s" "Search" supersonic-search-read :if supersonic--offer-search-p)
+   ("S" "Search (list buffer)" supersonic-search :if supersonic--offer-search-p)
    ("p" "Podcasts" supersonic-podcasts :if supersonic--offer-podcasts-p)]
   ["Controls"
    ("Q" "Show queue" supersonic-show-queue)

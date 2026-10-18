@@ -8355,6 +8355,39 @@ image to reuse, and redisplay then skips the unchanged-looking glyph."
          (current-buffer) 'art (propertize " " 'display (funcall image 2)))
         (should (equal flushed (list (funcall image 0))))))))
 
+(ert-deftest supersonic-tests-search-candidates-label-and-dispatch ()
+  "Each search result becomes a labelled candidate mapping to (ID . TYPE)."
+  (let ((candidates
+         (supersonic--search-candidates
+          '(:artists ((:id "ar1" :name "Tally Hall"))
+            :albums ((:id "al1" :name "Marvin's Marvelous" :artist "Tally Hall"))
+            :tracks ((:id "t1" :title "Ruler of Everything" :artist "Tally Hall" :album "Good & Evil"))))))
+    (should (equal (mapcar #'cdr candidates) '(("ar1" . "artist") ("al1" . "album") ("t1" . "song"))))
+    (should (equal (mapcar #'car candidates)
+                   '("Tally Hall" "Marvin's Marvelous — Tally Hall"
+                     "Ruler of Everything — Tally Hall — Good & Evil")))
+    (should (equal (mapcar (lambda (c) (supersonic--search-group (car c) nil)) candidates)
+                   '("Artists" "Albums" "Songs")))))
+
+(ert-deftest supersonic-tests-search-candidates-keep-duplicates-apart ()
+  "Results printing the same are told apart instead of one shadowing the other."
+  (let ((candidates
+         (supersonic--search-candidates
+          '(:tracks ((:id "t1" :title "Song") (:id "t2" :title "Song"))))))
+    (should (equal (mapcar #'car candidates) '("Song" "Song <2>")))
+    (should (equal (mapcar #'cadr candidates) '("t1" "t2")))))
+
+(ert-deftest supersonic-tests-common-keys-in-every-mode-map ()
+  "Every supersonic buffer answers the shared playback keys."
+  (dolist (map (list supersonic-queue-mode-map supersonic-now-playing-mode-map
+                     supersonic-search-mode-map supersonic-tracks-mode-map
+                     supersonic-album-mode-map supersonic-album-type-mode-map
+                     supersonic-artist-mode-map supersonic-podcast-mode-map
+                     supersonic-podcast-episodes-mode-map))
+    (should (eq (lookup-key map (kbd "SPC")) #'supersonic-toggle-playing))
+    (should (eq (lookup-key map (kbd ">")) #'supersonic-skip-track))
+    (should (eq (lookup-key map (kbd "N")) #'supersonic-show-now-playing))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here
