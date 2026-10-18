@@ -8990,6 +8990,28 @@ grids; TAB goes region by region, round from the last to the first."
         (supersonic-browse-open)))
     (should (equal '(more surprise) ran))))
 
+(ert-deftest supersonic-tests-browse-row-start-and-end ()
+  "Line start and end go to the first and last item of the line, then of
+the section; the same for lines of one item, like tracks."
+  (supersonic-tests--with-browse-stops
+      '(((t 1) 1 1 0 0) ((t 2) 1 1 0 1 same-line) ((t 3) 1 1 0 2 same-line)
+        ((t 4) 1 1 1 0) ((t 5) 1 1 1 1 same-line)
+        ((r 1) 2 nil nil nil) ((r 2) 2 nil nil nil) ((r 3) 2 nil nil nil))
+    (supersonic-browse--goto-index 1)
+    (supersonic-browse-row-end)
+    (should (equal '(t 3) (supersonic-tests--browse-at)))
+    (supersonic-browse-row-end)         ; at the line's end: the section's
+    (should (equal '(t 5) (supersonic-tests--browse-at)))
+    (supersonic-browse-row-start)
+    (should (equal '(t 4) (supersonic-tests--browse-at)))
+    (supersonic-browse-row-start)
+    (should (equal '(t 1) (supersonic-tests--browse-at)))
+    (supersonic-browse--goto-index 6)
+    (supersonic-browse-row-end)         ; a track: its line is just itself
+    (should (equal '(r 3) (supersonic-tests--browse-at)))
+    (supersonic-browse-row-start)
+    (should (equal '(r 1) (supersonic-tests--browse-at)))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here

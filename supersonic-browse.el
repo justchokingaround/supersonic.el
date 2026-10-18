@@ -369,12 +369,15 @@ of the artist's name over and over."
 
 (defun supersonic-browse--row-strut ()
   "Return an invisible stretch giving a track row its height, its text centred.
-`line-height' would put all the room above the text."
+`line-height' would put all the room above the text.  Centred is
+where the letters look centred: half a capital's height above the
+middle of the row."
   (let* ((height (round (* 1.75 (frame-char-height))))
          (info (ignore-errors (font-info (face-font 'default))))
-         (ascent (if info (aref info 4) (* 0.8 (frame-char-height))))
-         (descent (if info (aref info 5) (* 0.2 (frame-char-height))))
-         (above (+ (/ height 2.0) (/ (- ascent descent) 2.0))))
+         (pixels (if info (aref info 2) (* 0.8 (frame-char-height))))
+         ;; Letters, not the font's whole box (room for accents and
+         ;; descenders included), are what should look centred.
+         (above (+ (/ height 2.0) (* 0.34 pixels))))
     (propertize " " 'display `(space :width (0) :height (,height)
                                      :ascent ,(max 1 (min 100 (round (* 100 (/ above height)))))))))
 
@@ -469,46 +472,79 @@ Drawn rather than taken from a font, which may lack the glyph."
                        (stroke . ,color) (stroke-width . 2) (stroke-linecap . "round") (stroke-linejoin . "round")
                        (fill . "none"))))))
 
+(defconst supersonic-browse--hero-buttons
+  '((supersonic-browse-play play "Play" t)
+    (supersonic-browse-shuffle shuffle "Shuffle" nil)
+    (supersonic-browse-enqueue plus "Queue" nil))
+  "The buttons of an artist or album page: (COMMAND ICON LABEL PRIMARY).")
+
+(defconst supersonic-browse--button-height 44 "Height of a header button, in pixels.")
+
+(defun supersonic-browse--button-image (spec height selected)
+  "Return the display spec of header button SPEC, HEIGHT high, ringed if SELECTED.
+SPEC is one of `supersonic-browse--hero-buttons'."
+  (pcase-let* ((`(,_command ,icon ,label ,primary) spec)
+               (h supersonic-browse--button-height)
+               (w (+ 58 (* (length label) 11)))
+               (pad 5)
+               (svg (svg-create (+ w (* 2 pad)) height))
+               (y (- height h pad))
+               (accent (supersonic-browse--accent))
+               (ink (if primary (supersonic-browse--bg) (supersonic-browse--fg))))
+    (when selected
+      (dom-append-child svg (dom-node 'rect `((x . 1.5) (y . ,(- y 3.5)) (width . ,(+ w 7)) (height . ,(+ h 7))
+                                              (rx . ,(/ (+ h 7) 2.0)) (fill . "none")
+                                              (stroke . ,accent) (stroke-width . 3)))))
+    (dom-append-child svg (dom-node 'rect `((x . ,pad) (y . ,y) (width . ,w) (height . ,h) (rx . ,(/ h 2))
+                                            (fill . ,(cond (primary accent)
+                                                           (selected (supersonic-browse--blend accent (supersonic-browse--bg) 0.25))
+                                                           (t "none")))
+                                            (stroke . ,(if primary "none" (supersonic-browse--subtle)))
+                                            (stroke-width . 1.5))))
+    (dom-append-child svg (supersonic-browse--icon icon (+ pad 22) (+ y (/ h 2)) ink))
+    (dom-append-child svg (dom-node 'text `((x . ,(+ pad 38)) (y . ,(+ y (/ h 2))) (dy . "0.35em")
+                                            (font-family . ,(supersonic-browse--font-family)) (font-size . 17)
+                                            (font-weight . "bold") (fill . ,ink))
+                                    label))
+    (svg-image svg :ascent 100 :scale 1)))
+
 (defun supersonic-browse--hero (item shape kicker title subtitle meta)
   "Insert the header of a page about ITEM, its art drawn as SHAPE.
-KICKER, TITLE, SUBTITLE and META are the lines beside it.  Art and text
-are one SVG with play, shuffle and queue buttons drawn in, clickable
-through the image's map."
-  (let* ((graphic (supersonic-browse--graphic-p))
-         (key '(page))
-         (properties (progn
-                       (supersonic-browse--new-region)
-                       (supersonic-browse--item-properties key item 'supersonic-browse-focus t
-                                                           'supersonic-browse-region supersonic-browse--region))))
+KICKER, TITLE, SUBTITLE and META are the lines beside it.  Play,
+shuffle and queue buttons sit along the foot of the art, each an item
+of its own, so they take focus like any other."
+  (supersonic-browse--new-region)
+  (let ((graphic (supersonic-browse--graphic-p))
+        (region supersonic-browse--region))
     (if (not graphic)
-        (insert (apply #'propertize
-                       (concat (supersonic-browse--space supersonic-browse-margin)
-                               (propertize title 'face 'supersonic-browse-greeting) "\n"
-                               (supersonic-browse--space supersonic-browse-margin) (or subtitle "") "  " (or meta ""))
-                       properties)
-                "\n")
+        (progn
+          (insert (supersonic-browse--space supersonic-browse-margin)
+                  (propertize title 'face 'supersonic-browse-greeting) "\n"
+                  (supersonic-browse--space supersonic-browse-margin) (or subtitle "") "  " (or meta "") "\n"
+                  (supersonic-browse--space supersonic-browse-margin))
+          (dolist (spec supersonic-browse--hero-buttons)
+            (insert (apply #'propertize (concat " " (nth 2 spec) " ")
+                           'face 'supersonic-browse-button
+                           (supersonic-browse--item-properties
+                            (list 'hero (car spec)) item 'supersonic-browse-focus t
+                            'supersonic-browse-region region))
+                    "  "))
+          (insert "\n"))
       (let* ((size supersonic-browse-hero-size)
              (width (max (+ size 200) (supersonic-browse--available-width)))
              (file (supersonic-browse--art-file item supersonic-now-playing-art-size))
              (svg (svg-create width size))
              (family (supersonic-browse--font-family))
              (x (+ size 40))
-             (room (- width x))
              (title-size (min 56 (max 28 (round (* size 0.2)))))
-             (char (* 0.56 title-size))
-             (title (truncate-string-to-width title (max 4 (floor (/ room char))) nil nil "…"))
-             (h 44)
-             (button-y (- size h))
-             ;; Bottom-up: buttons at the foot of the art, the text stacked above.
-             (meta-y (- button-y 24))
+             (title (truncate-string-to-width title (max 4 (floor (/ (- width x) (* 0.56 title-size)))) nil nil "…"))
+             (foot (+ supersonic-browse--button-height 10))
+             (top (- size foot))
+             ;; Bottom-up: the text stacked above the line of buttons.
+             (meta-y (- top 18))
              (subtitle-y (- meta-y (if meta 34 0)))
              (title-y (- subtitle-y (if subtitle 42 0)))
-             (kicker-y (- title-y title-size 6))
-             (buttons '((supersonic-browse-play play "Play")
-                        (supersonic-browse-shuffle shuffle "Shuffle")
-                        (supersonic-browse-enqueue plus "Queue")))
-             (bx x)
-             (map nil))
+             (kicker-y (- title-y title-size 6)))
         (supersonic-browse--art-svg svg item size shape file)
         (cl-flet ((text (y content font-size color &rest more)
                     (dom-append-child svg (dom-node 'text `((x . ,x) (y . ,y) (font-family . ,family)
@@ -521,33 +557,24 @@ through the image's map."
             (text subtitle-y subtitle 22 (supersonic-browse--accent)))
           (when meta
             (text meta-y meta 17 (supersonic-browse--subtle))))
-        (cl-loop
-         for (command icon label) in buttons for primary = t then nil do
-         (let* ((w (+ 58 (* (length label) 11)))
-                (ink (if primary (supersonic-browse--bg) (supersonic-browse--fg))))
-           (dom-append-child svg (dom-node 'rect `((x . ,bx) (y . ,button-y) (width . ,w) (height . ,h) (rx . ,(/ h 2))
-                                                   (fill . ,(if primary (supersonic-browse--accent) "none"))
-                                                   (stroke . ,(if primary "none" (supersonic-browse--subtle)))
-                                                   (stroke-width . 1.5))))
-           (dom-append-child svg (supersonic-browse--icon icon (+ bx 22) (+ button-y (/ h 2)) ink))
-           (dom-append-child svg (dom-node 'text `((x . ,(+ bx 38)) (y . ,(+ button-y (/ h 2))) (dy . "0.35em")
-                                                   (font-family . ,family) (font-size . 17) (font-weight . "bold")
-                                                   (fill . ,ink))
-                                           label))
-           (push `((rect . ((,bx . ,button-y) . (,(+ bx w) . ,(+ button-y h))))
-                   ,command (pointer hand help-echo ,label))
-                 map)
-           (setq bx (+ bx w 14))))
-        (let ((keymap (make-sparse-keymap)))
-          (dolist (area map)
-            (define-key keymap (vector (nth 1 area) 'mouse-1) (nth 1 area)))
-          (set-keymap-parent keymap supersonic-browse-item-map)
-          (insert (propertize "\n" 'line-height 0.5)
-                  (supersonic-browse--space supersonic-browse-margin)
-                  (apply #'propertize "*"
-                         'display (apply #'svg-image svg :ascent 100 :scale 1 :map map (and file (list :base-uri file)))
-                         (plist-put (copy-sequence properties) 'keymap keymap))
-                  "\n"))))))
+        (let ((image (apply #'svg-image svg :ascent 100 :scale 1 (and file (list :base-uri file))))
+              (properties (list 'supersonic-browse-item item 'supersonic-browse-hero t)))
+          ;; The header is one image cut in two: the top beside the
+          ;; text, and the foot of the art, which the buttons follow.
+          (insert (propertize "\n" 'line-height 0.5) (supersonic-browse--space supersonic-browse-margin))
+          (insert (apply #'propertize "*" 'display `((slice 0 0 ,width ,top) ,image) properties) "\n")
+          (insert (supersonic-browse--space supersonic-browse-margin))
+          (insert (apply #'propertize "*" 'display `((slice 0 ,top ,x ,foot) ,image) properties))
+          (dolist (spec supersonic-browse--hero-buttons)
+            (insert (apply #'propertize "*"
+                           'display (supersonic-browse--button-image spec foot nil)
+                           'supersonic-browse-button spec
+                           'supersonic-browse-button-height foot
+                           (supersonic-browse--item-properties
+                            (list 'hero (car spec)) item 'supersonic-browse-focus t
+                            'supersonic-browse-region region 'help-echo (nth 2 spec)))
+                    (supersonic-browse--space 6)))
+          (insert "\n"))))))
 
 ;;;
 ;;; Pages
@@ -778,7 +805,7 @@ window's frame draws it, and loads finish in process callbacks."
     (while (setq pos (next-single-property-change pos 'supersonic-browse-item))
       (let ((item (get-text-property pos 'supersonic-browse-item))
             (size (cond ((get-text-property pos 'supersonic-browse-tile) (* 2 supersonic-browse-tile-size))
-                        ((equal (get-text-property pos 'supersonic-browse-key) '(page)) supersonic-now-playing-art-size))))
+                        ((get-text-property pos 'supersonic-browse-hero) supersonic-now-playing-art-size))))
         (when (and size item (plist-get item :art) (not (supersonic-browse--art-file item size))
                    (not (supersonic-browse--art-failed-p (plist-get item :art) size)))
           (push (cons item size) wanted))))
@@ -840,7 +867,7 @@ window's frame draws it, and loads finish in process callbacks."
           (put-text-property pos (1+ pos) 'display
                              (supersonic-browse--tile-image (get-text-property pos 'supersonic-browse-item) shape
                                                             (equal key supersonic-browse--selected))))
-         ((and (equal key '(page)) (get-text-property pos 'display))
+         ((get-text-property pos 'supersonic-browse-hero)
           ;; The header is one image: lay the page out again.
           (setq pos (point-max))
           (supersonic-browse--render)))))))
@@ -922,6 +949,10 @@ window's frame draws it, and loads finish in process callbacks."
     (when shape
       (put-text-property pos (1+ pos) 'display
                          (supersonic-browse--tile-image (get-text-property pos 'supersonic-browse-item) shape on)))
+    (when (get-text-property pos 'supersonic-browse-button)
+      (put-text-property pos (1+ pos) 'display
+                         (supersonic-browse--button-image (get-text-property pos 'supersonic-browse-button)
+                                                          (get-text-property pos 'supersonic-browse-button-height) on)))
     (when on
       (let ((title (save-excursion
                      (goto-char (1+ pos))
@@ -1001,6 +1032,51 @@ window's frame draws it, and loads finish in process callbacks."
   "Focus the last item."
   (interactive)
   (supersonic-browse--goto-index (1- (supersonic-browse--stop-count))))
+
+(defun supersonic-browse--line-range (i)
+  "Return (FIRST . LAST), the stops on the same line as stop I."
+  (let* ((n (supersonic-browse--stop-count))
+         (pos (aref supersonic-browse--stops i))
+         (start (save-excursion (goto-char pos) (line-beginning-position)))
+         (end (save-excursion (goto-char pos) (line-end-position)))
+         (first i) (last i))
+    (while (and (> first 0) (>= (aref supersonic-browse--stops (1- first)) start))
+      (setq first (1- first)))
+    (while (and (< last (1- n)) (<= (aref supersonic-browse--stops (1+ last)) end))
+      (setq last (1+ last)))
+    (cons first last)))
+
+(defun supersonic-browse--region-last (region)
+  "Return the last stop of REGION."
+  (let ((last nil))
+    (dotimes (i (supersonic-browse--stop-count))
+      (when (eql (supersonic-browse--prop i 'supersonic-browse-region) region)
+        (setq last i)))
+    last))
+
+(defun supersonic-browse-row-start ()
+  "Focus the first item of this line; there already, the first of the section."
+  (interactive)
+  (when (> (supersonic-browse--stop-count) 0)
+    (let* ((i (supersonic-browse--current-index))
+           (first (car (supersonic-browse--line-range i))))
+      (supersonic-browse--goto-index
+       (if (/= i first) first
+         (let ((region-first nil) (region (supersonic-browse--prop i 'supersonic-browse-region)))
+           (dotimes (j (supersonic-browse--stop-count))
+             (when (and (not region-first) (eql (supersonic-browse--prop j 'supersonic-browse-region) region))
+               (setq region-first j)))
+           region-first))))))
+
+(defun supersonic-browse-row-end ()
+  "Focus the last item of this line; there already, the last of the section."
+  (interactive)
+  (when (> (supersonic-browse--stop-count) 0)
+    (let* ((i (supersonic-browse--current-index))
+           (last (cdr (supersonic-browse--line-range i))))
+      (supersonic-browse--goto-index
+       (if (/= i last) last
+         (supersonic-browse--region-last (supersonic-browse--prop i 'supersonic-browse-region)))))))
 
 (defun supersonic-browse--grid-stop (grid row col)
   "Return the stop of GRID's tile at ROW and column COL, or the last before it."
@@ -1214,7 +1290,7 @@ TYPE is one of `supersonic-provider-album-list-types'."
   (let ((key (get-text-property (point) 'supersonic-browse-key))
         (item (get-text-property (point) 'supersonic-browse-item)))
     (pcase (car-safe key)
-      ('page (cons (plist-get supersonic-browse--page :kind)
+      ((or 'page 'hero) (cons (plist-get supersonic-browse--page :kind)
                    (append (list :id (plist-get supersonic-browse--page :id)) (plist-get supersonic-browse--page :item))))
       ('nil (user-error "Nothing here"))
       (kind (cons kind item)))))
@@ -1289,6 +1365,7 @@ TYPE is one of `supersonic-provider-album-list-types'."
       ('track (supersonic-playback-start (nthcdr (get-text-property (point) 'supersonic-browse-index)
                                                  (get-text-property (point) 'supersonic-browse-ids))))
       ((or 'button 'more) (funcall (plist-get item :action)))
+      ('hero (call-interactively (cadr key)))
       ('page (supersonic-browse-play))
       (_ (user-error "Nothing to open here")))))
 
@@ -1388,14 +1465,22 @@ TYPE is one of `supersonic-provider-album-list-types'."
                      (backward-paragraph . supersonic-browse-previous-section)
                      (beginning-of-buffer . supersonic-browse-first)
                      (end-of-buffer . supersonic-browse-last)
+                     (move-beginning-of-line . supersonic-browse-row-start)
+                     (move-end-of-line . supersonic-browse-row-end)
+                     (beginning-of-line . supersonic-browse-row-start)
+                     (end-of-line . supersonic-browse-row-end)
+                     (beginning-of-visual-line . supersonic-browse-row-start)
+                     (end-of-visual-line . supersonic-browse-row-end)
                      ;; xah-fly-keys
-                     (xah-beginning-of-line-or-block . supersonic-browse-previous-section)
-                     (xah-end-of-line-or-block . supersonic-browse-next-section)
+                     (xah-beginning-of-line-or-block . supersonic-browse-row-start)
+                     (xah-end-of-line-or-block . supersonic-browse-row-end)
                      ;; evil and meow
                      (evil-next-line . supersonic-browse-down)
                      (evil-previous-line . supersonic-browse-up)
                      (evil-forward-char . supersonic-browse-next)
                      (evil-backward-char . supersonic-browse-previous)
+                     (evil-beginning-of-line . supersonic-browse-row-start)
+                     (evil-end-of-line . supersonic-browse-row-end)
                      (meow-next . supersonic-browse-down)
                      (meow-prev . supersonic-browse-up)
                      (meow-right . supersonic-browse-next)
