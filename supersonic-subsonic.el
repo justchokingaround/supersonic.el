@@ -34,6 +34,8 @@
 ;;; Code:
 
 (require 'aio)
+(require 'seq)
+(require 'subr-x)
 (require 'url)
 
 (require 'supersonic-custom)
@@ -280,6 +282,54 @@ Built locally, and carrying the same token-auth triple as
 `supersonic-subsonic--stream-url'."
  (supersonic-subsonic--cover-art-request-url art size))
 
+(defun supersonic-subsonic--structured-lyrics (entry)
+  "Turn ENTRY, one OpenSubsonic structuredLyrics object, into lyrics.
+A synced ENTRY's `offset' is applied to every line, LRC style: a
+positive offset makes lines show sooner."
+  (let ((synced (eq (assoc-default "synced" entry) t))
+        (offset (or (assoc-default "offset" entry) 0)))
+    (list :synced synced
+          :lines (mapcar (lambda (line)
+                           (cons (and synced (max 0 (- (or (assoc-default "start" line) 0) offset)))
+                                 (or (assoc-default "value" line) "")))
+                         (assoc-default "line" entry))
+          :source "server")))
+
+(defun supersonic-subsonic--lyrics-from (data)
+  "Return the best lyrics in getLyricsBySongId DATA: synced over unsynced."
+  (let* ((entries (supersonic-recursive-assoc data '("subsonic-response" "lyricsList" "structuredLyrics")))
+         (entry (or (seq-find (lambda (e) (eq (assoc-default "synced" e) t)) entries)
+                    (car entries))))
+    (and entry (assoc-default "line" entry)
+         (supersonic-subsonic--structured-lyrics entry))))
+
+(aio-defun
+ supersonic-subsonic--lyrics (id)
+ "Return a promise resolving to the lyrics of track ID, or nil.
+Asks the OpenSubsonic getLyricsBySongId, which can hand out synced
+lyrics -- from embedded tags or .lrc files next to the music -- and
+falls back on the plain text of the original getLyrics for servers
+without it."
+ (let ((structured (condition-case nil
+                       (list (aio-await
+                              (supersonic-get-json
+                               (supersonic-build-url "/getLyricsBySongId.view" `(("id" . ,id))))))
+                     (error nil))))
+   (if structured
+       (supersonic-subsonic--lyrics-from (car structured))
+     (let* ((track (aio-await (supersonic-subsonic--song id)))
+            (data (aio-await
+                   (supersonic-get-json
+                    (supersonic-build-url
+                     "/getLyrics.view"
+                     `(("artist" . ,(or (plist-get track :artist) ""))
+                       ("title" . ,(or (plist-get track :title) "")))))))
+            (text (assoc-default "value" (supersonic-recursive-assoc data '("subsonic-response" "lyrics")))))
+       (and text (not (string-empty-p (string-trim text)))
+            (list :synced nil
+                  :lines (mapcar (lambda (line) (cons nil line)) (split-string (string-trim text) "\\r?\\n"))
+                  :source "server"))))))
+
 (defun supersonic-subsonic--cache-namespace ()
   "Return the Subsonic server's address, `supersonic-host'.
 Ids are only unique per server, so this is what keeps one server's
@@ -308,6 +358,7 @@ cached art and waveforms apart from another's."
    (scrobble . supersonic-subsonic--scrobble)
    (cover-art . supersonic-subsonic--cover-art)
    (cover-art-url . supersonic-subsonic--cover-art-url)
+   (lyrics . supersonic-subsonic--lyrics)
    (cache-namespace . supersonic-subsonic--cache-namespace)
    (config-hints . supersonic-subsonic--config-hints)))
 

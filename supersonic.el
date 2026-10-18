@@ -55,6 +55,8 @@
 (require 'supersonic-mpv)
 (require 'supersonic-waveform)
 
+(declare-function supersonic-lyrics "supersonic-lyrics")
+
 (defcustom supersonic-now-playing-layout-functions
   (list #'supersonic-now-playing-layout-art
         #'supersonic-now-playing-layout-label
@@ -173,6 +175,7 @@ binds itself afterwards win."
   (define-key map (kbd "-") #'supersonic-volume-down)
   (define-key map (kbd "z") #'supersonic-toggle-shuffle)
   (define-key map (kbd "R") #'supersonic-cycle-repeat)
+  (define-key map (kbd "L") #'supersonic-lyrics)
   map)
 
 ;;;###autoload (autoload 'supersonic-command-map "supersonic" nil t 'keymap)
@@ -200,6 +203,7 @@ binds itself afterwards win."
     (define-key map (kbd "z") #'supersonic-toggle-shuffle)
     (define-key map (kbd "R") #'supersonic-cycle-repeat)
     (define-key map (kbd "C") #'supersonic-clear-queue)
+    (define-key map (kbd "l") #'supersonic-lyrics)
     map)
   "Prefix keymap of supersonic's commands, for binding to a key of your own.
 For example:
@@ -2131,6 +2135,7 @@ provider is missing."
   ["Controls"
    ("Q" "Show queue" supersonic-show-queue)
    ("N" "Now playing" supersonic-show-now-playing)
+   ("L" "Lyrics" supersonic-lyrics)
    ("SPC" "Toggle playing" supersonic-toggle-playing)
    ("f" "Skip track" supersonic-skip-track)
    ("b" "Previous track" supersonic-prev-track)

@@ -8492,6 +8492,92 @@ track queued twice still maps each row to its own position."
     (should (equal " ♪ abcd… "
                    (substring-no-properties (supersonic-mode-line--format '(:title "abcdefgh") nil))))))
 
+(ert-deftest supersonic-tests-lyrics-parse-lrc ()
+  "LRC is parsed into sorted lines, repeating lines with several time tags,
+applying [offset:] and dropping ID and enhanced word tags."
+  (require 'supersonic-lyrics)
+  (let ((lyrics (supersonic-lyrics-parse-lrc
+                 "[ar:Tally Hall]\n[offset:+500]\n[00:12.50]First <00:13.00>line\n[00:05.00][01:00.00]Chorus\n[00:20]\n"
+                 "test")))
+    (should (plist-get lyrics :synced))
+    (should (equal "test" (plist-get lyrics :source)))
+    (should (equal '((4500 . "Chorus") (12000 . "First line") (19500 . "") (59500 . "Chorus"))
+                   (plist-get lyrics :lines)))))
+
+(ert-deftest supersonic-tests-lyrics-parse-plain ()
+  "Text without time tags is plain lyrics, trimmed of blank lines around it."
+  (require 'supersonic-lyrics)
+  (should (equal '(:synced nil :lines ((nil . "one") (nil . "") (nil . "two")) :source nil)
+                 (supersonic-lyrics-parse-lrc "\n\none\n\ntwo\n\n")))
+  (should-not (supersonic-lyrics-parse-lrc "  \n"))
+  (should-not (supersonic-lyrics-parse-lrc nil)))
+
+(ert-deftest supersonic-tests-lyrics-parse-lrc-fractions ()
+  "Hundredths, milliseconds and the [mm:ss:xx] variant all read right."
+  (require 'supersonic-lyrics)
+  (should (equal '((1230 . "a") (1234 . "b") (61500 . "c"))
+                 (plist-get (supersonic-lyrics-parse-lrc "[00:01.23]a\n[00:01.234]b\n[01:01:50]c") :lines))))
+
+(ert-deftest supersonic-tests-lyrics-line-index ()
+  "The line sung is the last one started; none before the first or unsynced."
+  (require 'supersonic-lyrics)
+  (let ((lyrics '(:synced t :lines ((1000 . "a") (2000 . "b") (3000 . "c")))))
+    (should-not (supersonic-lyrics--line-index lyrics 999))
+    (should (= 0 (supersonic-lyrics--line-index lyrics 1000)))
+    (should (= 1 (supersonic-lyrics--line-index lyrics 2999)))
+    (should (= 2 (supersonic-lyrics--line-index lyrics 99999))))
+  (should-not (supersonic-lyrics--line-index '(:synced nil :lines ((nil . "a"))) 5000)))
+
+(ert-deftest supersonic-tests-lyrics-lrclib-best ()
+  "Synced beats plain, closer duration breaks ties, far-off durations lose."
+  (require 'supersonic-lyrics)
+  (let ((plain '((duration . 200.0) (plainLyrics . "p")))
+        (synced-far '((duration . 260.0) (syncedLyrics . "[00:01]x")))
+        (synced-near '((duration . 202.0) (syncedLyrics . "[00:01]y")))
+        (synced-nearer '((duration . 200.5) (syncedLyrics . "[00:01]z"))))
+    (should (eq synced-nearer (supersonic-lyrics--lrclib-best (list plain synced-far synced-near synced-nearer) 200)))
+    (should (eq plain (supersonic-lyrics--lrclib-best (list plain synced-far) 200)))
+    (should-not (supersonic-lyrics--lrclib-best (list synced-far) 200))
+    (should-not (supersonic-lyrics--lrclib-best (list '((syncedLyrics . "[00:01]q"))) 200))
+    (should (equal '(:synced nil :lines ((nil . "♪ Instrumental ♪")) :source "lrclib")
+                   (supersonic-lyrics--lrclib-lyrics '((instrumental . t)))))))
+
+(ert-deftest supersonic-tests-subsonic-lyrics-prefers-synced ()
+  "getLyricsBySongId's synced entry wins, with its offset applied."
+  (let ((data '(("subsonic-response"
+                 ("lyricsList"
+                  ("structuredLyrics"
+                   (("synced" . :json-false) ("line" (("value" . "plain"))))
+                   (("synced" . t) ("offset" . 100)
+                    ("line" (("start" . 1000) ("value" . "one")) (("start" . 50) ("value" . "zero"))))))))))
+    (should (equal '(:synced t :lines ((900 . "one") (0 . "zero")) :source "server")
+                   (supersonic-subsonic--lyrics-from data))))
+  (let ((data '(("subsonic-response"
+                 ("lyricsList" ("structuredLyrics" (("synced" . :json-false) ("line" (("value" . "a"))))))))))
+    (should (equal '(:synced nil :lines ((nil . "a")) :source "server")
+                   (supersonic-subsonic--lyrics-from data))))
+  (should-not (supersonic-subsonic--lyrics-from '(("subsonic-response" ("lyricsList"))))))
+
+(ert-deftest supersonic-tests-lyrics-fetch-prefers-synced-from-anywhere ()
+  "Provider lyrics are kept when synced; otherwise LRCLIB's synced ones
+win, and plain lyrics are the last resort, the provider's first."
+  (require 'supersonic-lyrics)
+  (let ((supersonic-lyrics-lrclib t)
+        (provider-synced '(:synced t :lines ((0 . "s")) :source "server"))
+        (provider-plain '(:synced nil :lines ((nil . "p")) :source "server"))
+        (online-synced '(:synced t :lines ((0 . "o")) :source "lrclib"))
+        (online-plain '(:synced nil :lines ((nil . "op")) :source "lrclib")))
+    (cl-flet ((fetch (provided online)
+                (cl-letf (((symbol-function 'supersonic-provider-supports-p) (lambda (&rest _) t))
+                          ((symbol-function 'supersonic-provider-lyrics) (aio-lambda (_id) provided))
+                          ((symbol-function 'supersonic-lyrics-lrclib) (aio-lambda (_track) online)))
+                  (aio-wait-for (supersonic-lyrics--fetch "id" '(:title "t" :artist "a"))))))
+      (should (equal provider-synced (fetch provider-synced online-synced)))
+      (should (equal online-synced (fetch provider-plain online-synced)))
+      (should (equal provider-plain (fetch provider-plain online-plain)))
+      (should (equal online-plain (fetch nil online-plain)))
+      (should-not (fetch nil nil)))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here

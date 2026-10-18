@@ -416,5 +416,57 @@ to distinguish artists from album names."
   "Face of the mode-line indicator."
   :group 'supersonic-mode-line)
 
+;;;; Lyrics
+
+(defgroup supersonic-lyrics nil
+  "Lyrics of the track playing, synced where possible."
+  :group 'supersonic)
+
+(defcustom supersonic-lyrics-lrclib nil
+  "Non-nil to look lyrics up on LRCLIB when the provider has none synced.
+LRCLIB (https://lrclib.net) is a free, open database of synced lyrics.
+Asking it sends the artist, title, album and duration of every track
+played to that service, hence off by default."
+  :type 'boolean
+  :group 'supersonic-lyrics)
+
+(defcustom supersonic-lyrics-lrclib-url "https://lrclib.net"
+  "Base URL of the LRCLIB instance asked, see `supersonic-lyrics-lrclib'."
+  :type 'string
+  :group 'supersonic-lyrics)
+
+(defcustom supersonic-lyrics-echo-area nil
+  "Non-nil to show each synced lyrics line in the echo area as it is sung.
+It never covers the minibuffer or another message."
+  :type 'boolean
+  :group 'supersonic-lyrics)
+
+(defcustom supersonic-lyrics-in-now-playing t
+  "Non-nil to show the line being sung in the now-playing buffer.
+Takes effect when `supersonic-lyrics-follow-mode' is turned on."
+  :type 'boolean
+  :group 'supersonic-lyrics)
+
+(defcustom supersonic-lyrics-interval 0.25
+  "Seconds between checks for the next synced lyrics line."
+  :type 'number
+  :group 'supersonic-lyrics)
+
+(defcustom supersonic-lyrics-offset 0
+  "Milliseconds synced lyrics are shown sooner by; negative shows them later.
+The lyrics buffer's ( and ) keys adjust it."
+  :type 'integer
+  :group 'supersonic-lyrics)
+
+(defface supersonic-lyrics-current
+  '((t :inherit (bold highlight) :extend t))
+  "Face of the synced lyrics line being sung."
+  :group 'supersonic-lyrics)
+
+(defface supersonic-lyrics-past
+  '((t :inherit shadow))
+  "Face of the synced lyrics lines already sung."
+  :group 'supersonic-lyrics)
+
 (provide 'supersonic-custom)
 ;;; supersonic-custom.el ends here

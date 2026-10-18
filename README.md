@@ -358,6 +358,36 @@ nothing until the next list or search is rejected too.
 
 Everything below works the same with every provider and backend.
 
+### Keys
+
+`supersonic-command-map` holds the commands used most, for binding to
+a prefix key of your own:
+
+```elisp
+(global-set-key (kbd "C-c m") 'supersonic-command-map)
+```
+
+| Key | Command |
+|-----|---------|
+| `SPC` / `n` / `p` | play/pause, next, previous |
+| `f` / `b` | seek forward/back |
+| `+` `=` / `-` | volume up/down |
+| `z` / `R` | toggle shuffle, cycle repeat (off, queue, track) |
+| `s` / `S` | search in the minibuffer / in a list buffer |
+| `o` / `q` / `l` | now playing, play queue, lyrics |
+| `a` `r` `e` `w` | artists, random, recent, newest albums |
+| `C` | clear the play queue but the current track |
+| `m` | the `supersonic` transient |
+
+Every supersonic buffer shares the playback keys `SPC`, `<` `>`
+(previous/next), `[` `]` (seek), `+` `-`, `z`, `R`, `/` (search),
+`N` (now playing), `Q` (queue), `L` (lyrics) and `M` (transient).
+
+`supersonic-search-read` searches and lets you pick a result with
+`completing-read`, grouped into artists, albums and songs: a song is
+played, an album or artist opened.  With `C-u`, a song or album is
+added to the play queue instead.
+
 ### Play queue
 
 In the tracks and albums buffers, `RET` replaces the current play
@@ -369,6 +399,12 @@ to back:
   after it in the buffer.
 - Albums buffer: `RET` opens the album's track list; `a` adds the
   whole album to the play queue directly, without opening it.
+
+The play queue buffer (`supersonic-show-queue`) edits the queue:
+`RET` plays the entry at point, `d`/`DEL` removes it, `M-p`/`M-n`
+(or `M-<up>`/`M-<down>`) move it, and `C` clears the queue but for
+the track playing.  Shuffle, repeat, and editing the queue are up to
+the backend; mpv does all of them.
 
 ### Now playing
 
@@ -452,6 +488,39 @@ is set per view: `supersonic-artist-art-size` for the artist list (`nil`
 turns its images off), `supersonic-list-art-size` for the album and
 podcast lists, `supersonic-now-playing-art-size` for
 the now-playing buffer.
+
+### Lyrics
+
+`supersonic-lyrics` shows the lyrics of the track playing.  Synced
+lyrics have the line being sung highlighted and kept centred; `RET`
+or a click on a line plays from there, `(`/`)` shift the lyrics a
+quarter second later/sooner should they run off, `f` toggles
+following playback and `g` looks the lyrics up again.
+
+It turns on `supersonic-lyrics-follow-mode`, which looks lyrics up
+for every track played -- from the server first (Subsonic: the
+OpenSubsonic `getLyricsBySongId`, serving lyrics embedded in the files
+and `.lrc` files next to them), then, if the server has none synced,
+from [LRCLIB](https://lrclib.net) -- and also shows the line being sung
+in the now-playing buffer (`supersonic-lyrics-in-now-playing`) and, if
+you like, the echo area:
+
+```elisp
+(setq supersonic-lyrics-lrclib t        ; sends artist/title/album/duration to lrclib.net
+      supersonic-lyrics-echo-area t)
+(supersonic-lyrics-follow-mode 1)
+```
+
+For a mode line of your own, `supersonic-lyrics-line` holds the line
+being sung and `supersonic-lyrics-line-change-hook` runs as it changes.
+
+### Mode line
+
+`supersonic-mode-line-mode` shows the track playing in the mode line
+(through `global-mode-string`), with a marker while it is paused.
+`mouse-1` on it opens now playing and `mouse-3` toggles playback.  If
+your mode line does not show `global-mode-string`, put
+`supersonic-mode-line-string` into it yourself.
 
 ### MPRIS
 

@@ -67,7 +67,7 @@
 (defconst supersonic-provider-operations
   '(artists artist-albums album-list album-tracks track search
     podcasts podcast-episodes add-podcast download-podcast-episode
-    stream-url scrobble cover-art cover-art-url cache-namespace config-hints)
+    stream-url scrobble cover-art cover-art-url lyrics cache-namespace config-hints)
   "The library operations a provider can implement.
 All but `scrobble', `cache-namespace' and `config-hints' return a
 promise.
@@ -110,6 +110,12 @@ promise.
 - `cover-art-url' takes the same ART and SIZE and resolves to a URL
   the image can be fetched from, for a device that fetches it itself,
   such as a UPnP renderer.  The URL may carry credentials.
+- `lyrics' takes a track id and resolves to that track's lyrics, as
+  a plist (:synced SYNCED :lines LINES :source SOURCE), or to nil if
+  the provider has none.  LINES is a list of (MS . TEXT), MS being
+  the time in milliseconds a line starts at when SYNCED is non-nil,
+  and nil otherwise.  SOURCE is a short string naming where the
+  lyrics came from, for display.
 - `cache-namespace' takes no arguments and returns a string naming
   the library this provider is connected to, such as a server
   address.  See `supersonic-provider-cache-name'.
@@ -269,6 +275,12 @@ ART is an item's `:art' reference, never the item's own id."
 ART is an item's `:art' reference, never the item's own id.  The URL
 may carry credentials, as `supersonic-provider-stream-url''s may."
  (aio-await (supersonic-provider--call 'cover-art-url art size)))
+
+(aio-defun
+ supersonic-provider-lyrics (track-id)
+ "Return a promise resolving to the lyrics of the track with TRACK-ID, or nil.
+See `supersonic-provider-operations' for their shape."
+ (aio-await (supersonic-provider--call 'lyrics track-id)))
 
 (defun supersonic-provider-cache-name (id)
   "Return a file name for ID that is safe, bounded and unique to the library.
