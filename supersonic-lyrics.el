@@ -186,27 +186,53 @@ an error, such as 404 for a track it does not know."
                                :null-object nil :false-object nil)
           (error nil)))))
 
+(defun supersonic-lyrics--clean-title (title)
+  "Return TITLE without the parts lyrics databases often leave out of theirs.
+Such as \"(feat. X)\", \"[Live]\" or \" - 2011 Remaster\"."
+  (let ((case-fold-search t))
+    (string-trim
+     (replace-regexp-in-string
+      "[[:space:]]+-[[:space:]]+.*\\(remaster\\|version\\|edit\\|mix\\|live\\|mono\\|stereo\\).*\\'" ""
+      (replace-regexp-in-string "[[:space:]]*[([][^])]*[])]" "" title)))))
+
 (aio-defun
  supersonic-lyrics-lrclib (track)
  "Return a promise resolving to LRCLIB's lyrics for TRACK, or nil.
-TRACK is a track plist.  Asks for an exact match on artist, title,
-album and duration first, then searches by artist and title."
- (let ((artist (plist-get track :artist))
-       (title (plist-get track :title))
-       (duration (plist-get track :duration)))
-   (when (and artist title)
-     (or (supersonic-lyrics--lrclib-lyrics
-          (aio-await
-           (supersonic-lyrics--lrclib-request
-            "/api/get"
-            (append `(("artist_name" . ,artist) ("track_name" . ,title))
-                    (and (plist-get track :album) `(("album_name" . ,(plist-get track :album))))
-                    (and duration `(("duration" . ,(number-to-string duration))))))))
-         (let ((records (aio-await
-                         (supersonic-lyrics--lrclib-request
-                          "/api/search" `(("artist_name" . ,artist) ("track_name" . ,title))))))
-           (and (listp records)
-                (supersonic-lyrics--lrclib-lyrics (supersonic-lyrics--lrclib-best records duration))))))))
+TRACK is a track plist.  Tries, until one has synced lyrics: an exact
+match on artist, title, album and duration; the same without the album,
+as LRCLIB often has several records of a song, not all synced; a
+search by artist and title; and a search by artist and the title
+stripped by `supersonic-lyrics--clean-title'.  Falls back on the first
+plain lyrics found."
+ (let* ((artist (plist-get track :artist))
+        (title (plist-get track :title))
+        (album (plist-get track :album))
+        (duration (plist-get track :duration))
+        (clean (and title (supersonic-lyrics--clean-title title)))
+        (base (and artist title
+                   (append `(("artist_name" . ,artist) ("track_name" . ,title))
+                           (and duration `(("duration" . ,(number-to-string duration)))))))
+        (attempts
+         (and base
+              (delq nil
+                    (list (and album (list "/api/get" (append base `(("album_name" . ,album)))))
+                          (list "/api/get" base)
+                          (list "/api/search" `(("artist_name" . ,artist) ("track_name" . ,title)))
+                          (and clean (not (string-empty-p clean)) (not (equal clean title))
+                               (list "/api/search" `(("artist_name" . ,artist) ("track_name" . ,clean))))))))
+        (found nil)
+        (plain nil))
+   (while (and attempts (not found))
+     (pcase-let* ((`(,endpoint ,query) (pop attempts))
+                  (answer (aio-await (supersonic-lyrics--lrclib-request endpoint query)))
+                  (lyrics (supersonic-lyrics--lrclib-lyrics
+                           (if (equal endpoint "/api/search")
+                               (and (listp answer) (supersonic-lyrics--lrclib-best answer duration))
+                             answer))))
+       (if (plist-get lyrics :synced)
+           (setq found lyrics)
+         (setq plain (or plain lyrics)))))
+   (or found plain)))
 
 ;;;
 ;;; Looking lyrics up
@@ -220,15 +246,23 @@ album and duration first, then searches by artist and title."
   (expand-file-name (concat (supersonic-provider-cache-name track-id) ".eld")
                     (expand-file-name "lyrics" supersonic-cache-path)))
 
+(defconst supersonic-lyrics--cache-version 2
+  "Version of the lookup that wrote a cached entry; older ones are looked up anew.
+Bumped whenever the lookup got better at finding synced lyrics.")
+
 (defun supersonic-lyrics--read-cache (track-id)
-  "Return the lyrics of TRACK-ID cached on disk, or nil."
+  "Return the lyrics of TRACK-ID cached on disk, or nil.
+An entry written by an older lookup, see `supersonic-lyrics--cache-version',
+counts as none."
   (let ((file (supersonic-lyrics--cache-file track-id)))
     (when (file-readable-p file)
       (condition-case nil
           (with-temp-buffer
             (insert-file-contents file)
             (let ((lyrics (read (current-buffer))))
-              (and (plist-get lyrics :lines) lyrics)))
+              (and (eql (plist-get lyrics :cache-version) supersonic-lyrics--cache-version)
+                   (plist-get lyrics :lines)
+                   lyrics)))
         (error nil)))))
 
 (defun supersonic-lyrics--write-cache (track-id lyrics)
@@ -241,7 +275,8 @@ album and duration first, then searches by artist and title."
                 (print-level nil)
                 (coding-system-for-write 'utf-8))
             (insert ";; -*- coding: utf-8 -*-\n")
-            (prin1 lyrics (current-buffer)))))
+            (prin1 (append (list :cache-version supersonic-lyrics--cache-version) lyrics)
+                   (current-buffer)))))
     (error (supersonic--log "lyrics cache write failed: %s" (error-message-string err)))))
 
 (aio-defun

@@ -8688,6 +8688,40 @@ once a minute, and not for other errors."
       (supersonic-local--maybe-offer-fallback "fetch albums" '(error "No answer from http://x/rest within 10 seconds"))
       (should (= 1 scheduled)))))
 
+(ert-deftest supersonic-tests-lyrics-lrclib-keeps-looking-for-synced ()
+  "A plain-only exact match does not end the LRCLIB lookup: the match
+without album, then searches, are tried for synced lyrics first."
+  (require 'supersonic-lyrics)
+  (let ((asked nil))
+    (cl-letf (((symbol-function 'supersonic-lyrics--lrclib-request)
+               (aio-lambda (endpoint query)
+                 (push (list endpoint (and (assoc "album_name" query) t)) asked)
+                 (if (assoc "album_name" query)
+                     '((plainLyrics . "plain"))
+                   '((syncedLyrics . "[00:01.00]synced"))))))
+      (let ((lyrics (aio-wait-for (supersonic-lyrics-lrclib
+                                   '(:title "Fata Morgana (feat. Tokio Hotel)" :artist "Nina Chuba"
+                                     :album "Fata Morgana" :duration 168)))))
+        (should (plist-get lyrics :synced))
+        (should (equal '(("/api/get" t) ("/api/get" nil)) (nreverse asked)))))))
+
+(ert-deftest supersonic-tests-lyrics-lrclib-falls-back-on-plain ()
+  "With no synced lyrics anywhere, the first plain lyrics found are kept."
+  (require 'supersonic-lyrics)
+  (cl-letf (((symbol-function 'supersonic-lyrics--lrclib-request)
+             (aio-lambda (endpoint _query)
+               (if (equal endpoint "/api/get") '((plainLyrics . "words")) nil))))
+    (should (equal '(:synced nil :lines ((nil . "words")) :source "lrclib")
+                   (aio-wait-for (supersonic-lyrics-lrclib '(:title "Song (feat. X)" :artist "A" :duration 100)))))))
+
+(ert-deftest supersonic-tests-lyrics-clean-title ()
+  "Featured artists, bracketed notes and remaster suffixes are dropped."
+  (require 'supersonic-lyrics)
+  (should (equal "Fata Morgana" (supersonic-lyrics--clean-title "Fata Morgana (feat. Tokio Hotel)")))
+  (should (equal "Hey Jude" (supersonic-lyrics--clean-title "Hey Jude - Remastered 2015")))
+  (should (equal "Numb" (supersonic-lyrics--clean-title "Numb [Live]")))
+  (should (equal "Re-Run" (supersonic-lyrics--clean-title "Re-Run"))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here
