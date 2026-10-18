@@ -8388,6 +8388,19 @@ image to reuse, and redisplay then skips the unchanged-looking glyph."
     (should (eq (lookup-key map (kbd ">")) #'supersonic-skip-track))
     (should (eq (lookup-key map (kbd "N")) #'supersonic-show-now-playing))))
 
+(ert-deftest supersonic-tests-get-text-error-hides-credentials ()
+  "A failed fetch names the endpoint but not the query carrying the auth token."
+  (cl-letf (((symbol-function 'supersonic-url-retrieve)
+             (lambda (_url)
+               (let ((promise (aio-promise))
+                     (value (cons '(:error (error http 501)) (generate-new-buffer " *test*"))))
+                 (aio-resolve promise (lambda () value))
+                 promise))))
+    (let ((err (should-error
+                (aio-wait-for (supersonic-get-text "http://host/rest/getPodcasts.view?u=me&t=TOKEN&s=SALT")))))
+      (should (string-match-p "getPodcasts\\.view" (error-message-string err)))
+      (should-not (string-match-p "TOKEN\\|SALT" (error-message-string err))))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here

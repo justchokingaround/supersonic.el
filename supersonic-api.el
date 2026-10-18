@@ -152,7 +152,8 @@ versions.  The promise rejects if the request failed."
    (unwind-protect
        (progn
          (when (plist-get status :error)
-           (error "Failed to fetch %s: %S" url (plist-get status :error)))
+           ;; Without the query string: it carries the auth token and salt.
+           (error "Failed to fetch %s: %S" (car (split-string url "?")) (plist-get status :error)))
          (with-current-buffer buffer
            (decode-coding-string (buffer-substring (1+ url-http-end-of-headers) (point-max)) 'utf-8)))
      (kill-buffer buffer))))
