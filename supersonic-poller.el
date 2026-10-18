@@ -23,7 +23,7 @@
 ;; What a playback backend needs when its player reports nothing on
 ;; its own and has to be asked, on a timer, what it is doing: the
 ;; jukebox in `supersonic-jukebox.el', UPnP renderers in
-;; `supersonic-upnp.el' (#79) and Music Assistant players in
+;; `supersonic-upnp.el' and Music Assistant players in
 ;; `supersonic-music-assistant-player.el'.  mpv reports every change
 ;; itself, and needs none of this.
 ;;
@@ -110,7 +110,7 @@ track a poll no longer finds stands in for the one that just finished.
 Compares what POLLER's `summarize' makes of its snapshot with what the
 hooks last ran for: a different track runs the track-change hook, and
 scrobbles; otherwise different entries run the queue-change hook (an
-`add' moves neither the track nor the pause state, see #38), and a
+`add' moves neither the track nor the pause state), and a
 different pause state the state-change hook.  WENT-LIVE non-nil runs
 the track-change hook regardless, without scrobbling, since a player
 that answers again after an outage is news to whoever showed it gone.
@@ -196,7 +196,7 @@ answer arrives, see `supersonic-poller--stop'."
 (defun supersonic-poller--tick (poller)
   "Poll POLLER's player, unless a poll is still waiting for its answer.
 What POLLER's timer runs.  Skipping keeps a player that stopped
-answering from piling up open connections (#70), and loses nothing:
+answering from piling up open connections, and loses nothing:
 the poll in flight is about to report the same state."
   (unless (supersonic-poller-in-flight poller)
     (ignore (supersonic-poller-poll poller))))

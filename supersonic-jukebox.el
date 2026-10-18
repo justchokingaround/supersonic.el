@@ -194,7 +194,7 @@ Never issues a request of its own -- see `supersonic-jukebox--poll'."
 That is, when the playlist was empty or played to its end, which
 Navidrome reports as the last entry, not playing, at position 0.  A
 jukebox stopped partway is left stopped, since `start' would only
-resume that entry (#39).  Polls first, since the cached snapshot may
+resume that entry.  Polls first, since the cached snapshot may
 be stale.  `skip' does not start a stopped jukebox, hence the `start'
 after it."
   (supersonic--with-async-error-handling
@@ -238,7 +238,7 @@ Based on the cached snapshot's `:playing'."
   "Skip the jukebox to the entry after the cached snapshot's current one.
 A no-op past the last entry: `skip' has no bounds of its own, so asking
 it for an out-of-range index there just replays the last entry instead
-of stopping (#50)."
+of stopping."
   (supersonic--with-async-error-handling
    nil "skip to the next jukebox track"
    (let* ((snapshot (supersonic-jukebox--snapshot))
@@ -256,7 +256,7 @@ of stopping (#50)."
   "Skip the jukebox to the entry before the cached snapshot's current one.
 jukeboxControl has no \"previous track\" action, only `skip' to an
 index.  A no-op before the first entry: `skip' has no bounds of its
-own, and a negative index replays the last entry (#50)."
+own, and a negative index replays the last entry."
   (supersonic--with-async-error-handling
    nil "skip to the previous jukebox track"
    (let ((index (1- (or (plist-get (supersonic-jukebox--snapshot) :current-index) -1))))

@@ -104,7 +104,7 @@ rejects, and the connection and BUFFER are gone already.  Otherwise
 BUFFER is the response buffer, which the caller must kill.
 
 Closing the connection is the point: a request that is merely no
-longer waited for still holds a file descriptor open (#70)."
+longer waited for still holds a file descriptor open."
   (let* ((promise (aio-promise))
          (timer nil)
          (buffer

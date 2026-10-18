@@ -20,7 +20,7 @@
 
 ;;; Commentary:
 
-;; The Music Assistant playback backend (#60): plays on one of the
+;; The Music Assistant playback backend: plays on one of the
 ;; Music Assistant (MA) server's own players -- speakers, Chromecasts,
 ;; AirPlay devices, its web player -- the way `supersonic-jukebox.el'
 ;; plays on a Subsonic server's jukebox.  Registers itself with the
@@ -35,7 +35,7 @@
 ;; The player is `supersonic-music-assistant-player', picked with
 ;; `supersonic-music-assistant-select-player' -- or, with none picked
 ;; yet, offered when playing or enqueueing, taking the server's only
-;; player without asking (#93).  A player's queue has the player's id.
+;; player without asking.  A player's queue has the player's id.
 ;;
 ;; MA's HTTP API pushes nothing, so the queue is polled through
 ;; `supersonic-poller.el' while `music-assistant' is the active backend.

@@ -20,13 +20,13 @@
 
 ;;; Commentary:
 
-;; The `upnp' playback backend (#63): plays to a UPnP MediaRenderer --
+;; The `upnp' playback backend: plays to a UPnP MediaRenderer --
 ;; an AV receiver, a network speaker, a smart TV -- by telling its
 ;; `AVTransport:1' service, over SOAP, which URL to play.  It plays for
 ;; any provider that can name a stream URL.  Opt-in, like the jukebox.
 ;;
-;; Most renderers hold one track at a time, so the queue is kept here
-;; (#65).  A renderer reports nothing unless subscribed to, which would
+;; Most renderers hold one track at a time, so the queue is kept here.
+;; A renderer reports nothing unless subscribed to, which would
 ;; take an HTTP server in Emacs, so it is polled through
 ;; `supersonic-poller.el', and a poll that finds the current track
 ;; played to its end loads the next one.  So the queue only moves on
@@ -43,7 +43,7 @@
 ;; the README says what this exposes.  A URL on `localhost' sends the
 ;; renderer looking for the server on itself, which is warned about.
 ;;
-;; `supersonic-upnp-select-renderer' (#64) finds renderers with an SSDP
+;; `supersonic-upnp-select-renderer' finds renderers with an SSDP
 ;; search, and offers only MediaRenderers with an `AVTransport' service.
 ;; Where multicast does not get through, a device description URL can
 ;; be entered by hand.
@@ -762,7 +762,7 @@ whenever it stops.
 CURRENT must also come within `supersonic-upnp--max-poll-gap' of
 PREVIOUS.  A renderer that went unreachable mid-track and is back,
 stopped, minutes later was switched off, not played to the end, and
-must not start the next track on its own (#81); one poll lost to a
+must not start the next track on its own; one poll lost to a
 network hiccup as the track ends still moves on."
   (and previous current
        (not supersonic-upnp--user-stopped)
@@ -948,7 +948,7 @@ landed for the current track."
 
 (defconst supersonic-upnp--transition-not-available 701
   "The UPnP error code of an action the transport's state does not allow.
-The LG TV answers `SetAVTransportURI' with it while paused (#84).")
+The LG TV answers `SetAVTransportURI' with it while paused.")
 
 (aio-defun supersonic-upnp--load (item)
   "Give the renderer ITEM, as `supersonic-upnp--item' resolves to, to play.

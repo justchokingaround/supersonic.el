@@ -275,8 +275,7 @@ end on a whole message; the rest is kept in
   "Write STRING to the mpv IPC socket, returning non-nil on success.
 A dead socket or a `file-error' on writing counts as mpv having gone
 away.  That narrows, but cannot close, the race against mpv exiting
-mid-command: a SIGPIPE during the write itself is not a Lisp error
-\(#15)."
+mid-command: a SIGPIPE during the write itself is not a Lisp error."
   (and (process-live-p supersonic-mpv--socket)
        (condition-case nil
            (progn

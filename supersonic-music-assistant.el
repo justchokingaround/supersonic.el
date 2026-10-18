@@ -20,7 +20,7 @@
 
 ;;; Commentary:
 
-;; The Music Assistant library provider (#58): implements the browse
+;; The Music Assistant library provider: implements the browse
 ;; operations of the facade in `supersonic-provider.el' against a
 ;; Music Assistant (MA) server, and registers them under the name
 ;; `music-assistant'.  Like `supersonic-jukebox.el' it is opt-in:
@@ -51,7 +51,7 @@
 ;; `spotify://track/...' -- handed out verbatim.  Commands that want a
 ;; provider and an item id get them by splitting the URI.
 ;;
-;; Images (#59) are fetched through the server's `/imageproxy', which
+;; Images are fetched through the server's `/imageproxy', which
 ;; scales them and asks for no token, where the server hands out proxy
 ;; ids; see `supersonic-music-assistant--art'.
 ;;
