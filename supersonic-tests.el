@@ -5634,7 +5634,7 @@ control URL.  The facade's hooks start out empty."
   "Loading `supersonic-upnp' registers `upnp', implementing every
 operation, for providers with `stream-url'."
   (let ((operations (gethash 'upnp supersonic-playback--backends)))
-    (dolist (operation supersonic-playback-operations)
+    (dolist (operation supersonic-playback-core-operations)
       (should (functionp (alist-get operation operations)))))
   (should (equal '(stream-url) (plist-get (gethash 'upnp supersonic-playback--compatibility) :requires))))
 
@@ -7639,7 +7639,7 @@ Each as (COMMAND . ARGS), in order, leaving out the `/info' check."
 plays for the `music-assistant' provider and no other, and switching to
 it is refused for `subsonic' before anything is stopped."
   (let ((operations (gethash 'music-assistant supersonic-playback--backends)))
-    (dolist (operation supersonic-playback-operations)
+    (dolist (operation supersonic-playback-core-operations)
       (should (functionp (alist-get operation operations)))))
   (should (supersonic-playback-compatible-p 'music-assistant 'music-assistant))
   (should-not (supersonic-playback-compatible-p 'music-assistant 'subsonic))
@@ -8400,6 +8400,97 @@ image to reuse, and redisplay then skips the unchanged-looking glyph."
                 (aio-wait-for (supersonic-get-text "http://host/rest/getPodcasts.view?u=me&t=TOKEN&s=SALT")))))
       (should (string-match-p "getPodcasts\\.view" (error-message-string err)))
       (should-not (string-match-p "TOKEN\\|SALT" (error-message-string err))))))
+
+(ert-deftest supersonic-tests-mpv-queue-editing-commands ()
+  "Queue editing and playback mode operations become the matching mpv
+IPC commands; a move down targets the entry after TO, as `playlist-move'
+inserts before its second argument."
+  (let ((commands nil)
+        (supersonic-mpv--repeat nil)
+        (supersonic-mpv--shuffled nil)
+        (supersonic-playback-queue-change-hook nil))
+    (cl-letf (((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (push args commands) t))
+              ((symbol-function 'supersonic-mpv-live-p) (lambda () t)))
+      (supersonic-playback-play-index 2)
+      (supersonic-playback-remove 1)
+      (supersonic-playback-move 0 1)
+      (supersonic-playback-move 3 1)
+      (supersonic-playback-move 2 2)
+      (supersonic-playback-clear)
+      (supersonic-playback-shuffle t)
+      (should supersonic-mpv--shuffled)
+      (supersonic-playback-shuffle nil)
+      (should-not supersonic-mpv--shuffled)
+      (supersonic-playback-repeat 'track)
+      (should (eq supersonic-mpv--repeat 'track))
+      (supersonic-playback-volume -5))
+    (should (equal '(("playlist-play-index" 2)
+                     ("playlist-remove" 1)
+                     ("playlist-move" 0 2)
+                     ("playlist-move" 3 1)
+                     ("playlist-clear")
+                     ("playlist-shuffle")
+                     ("playlist-unshuffle")
+                     ("set_property" "loop-file" "inf")
+                     ("set_property" "loop-playlist" "no")
+                     ("add" "volume" -5))
+                   (nreverse commands)))))
+
+(ert-deftest supersonic-tests-mpv-repeat-outlives-mpv ()
+  "A repeat mode set while mpv is down is only remembered, not sent."
+  (let ((commands nil)
+        (supersonic-mpv--repeat nil))
+    (cl-letf (((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (push args commands) t))
+              ((symbol-function 'supersonic-mpv-live-p) (lambda () nil)))
+      (supersonic-mpv-repeat 'queue))
+    (should (eq supersonic-mpv--repeat 'queue))
+    (should-not commands)))
+
+(ert-deftest supersonic-tests-cycle-repeat-goes-off-queue-track ()
+  "Repeat cycles off, queue, track and back off."
+  (let ((mode nil))
+    (supersonic-tests--with-backend
+     `((live-p . ,(lambda () t))
+       (status . ,(aio-lambda (key) (and (eq key 'repeat) mode)))
+       (repeat . ,(lambda (m) (setq mode m))))
+     (let ((inhibit-message t))
+       (supersonic-cycle-repeat)
+       (should (eq mode 'queue))
+       (supersonic-cycle-repeat)
+       (should (eq mode 'track))
+       (supersonic-cycle-repeat)
+       (should (eq mode nil))))))
+
+(ert-deftest supersonic-tests-queue-index-at-point-tells-duplicates-apart ()
+  "The queue position of a row is found by entry identity, so the same
+track queued twice still maps each row to its own position."
+  (with-temp-buffer
+    (supersonic-queue-mode)
+    (setq tabulated-list-entries
+          (list (list "t1" (vector " " "A" "" ""))
+                (list "t1" (vector "▶" "A" "" ""))
+                (list "t2" (vector " " "B" "" ""))))
+    (tabulated-list-print)
+    (goto-char (point-min))
+    (while (not (tabulated-list-get-entry)) (forward-line 1))
+    (should (= 0 (supersonic-queue--index-at-point)))
+    (forward-line 1)
+    (should (= 1 (supersonic-queue--index-at-point)))
+    (forward-line 1)
+    (should (= 2 (supersonic-queue--index-at-point)))))
+
+(ert-deftest supersonic-tests-mode-line-format ()
+  "The indicator shows the pause state, title and artist, truncated."
+  (require 'supersonic-mode-line)
+  (should (equal "" (supersonic-mode-line--format nil nil)))
+  (let ((supersonic-mode-line-max-width 40))
+    (should (equal " ♪ Ruler of Everything — Tally Hall "
+                   (substring-no-properties
+                    (supersonic-mode-line--format '(:title "Ruler of Everything" :artist "Tally Hall") nil))))
+    (should (string-prefix-p " ⏸ " (substring-no-properties (supersonic-mode-line--format '(:title "x") t)))))
+  (let ((supersonic-mode-line-max-width 5))
+    (should (equal " ♪ abcd… "
+                   (substring-no-properties (supersonic-mode-line--format '(:title "abcdefgh") nil))))))
 
 (provide 'supersonic-tests)
 

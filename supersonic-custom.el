@@ -387,5 +387,34 @@ Inherits from `supersonic-albums-name' but can be customized separately
 to distinguish artists from album names."
   :group 'supersonic)
 
+(defcustom supersonic-volume-step 5
+  "Percent the volume commands change the volume by, without a prefix."
+  :type 'integer
+  :group 'supersonic)
+
+(defgroup supersonic-mode-line nil
+  "Show the track supersonic plays in the mode line."
+  :group 'supersonic)
+
+(defcustom supersonic-mode-line-max-width 40
+  "Width the mode-line indicator is truncated to, in characters."
+  :type 'integer
+  :group 'supersonic-mode-line)
+
+(defcustom supersonic-mode-line-playing-icon "♪"
+  "Marker shown in front of the track while it plays."
+  :type 'string
+  :group 'supersonic-mode-line)
+
+(defcustom supersonic-mode-line-paused-icon "⏸"
+  "Marker shown in front of the track while it is paused."
+  :type 'string
+  :group 'supersonic-mode-line)
+
+(defface supersonic-mode-line
+  '((t :inherit mode-line-emphasis))
+  "Face of the mode-line indicator."
+  :group 'supersonic-mode-line)
+
 (provide 'supersonic-custom)
 ;;; supersonic-custom.el ends here

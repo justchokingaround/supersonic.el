@@ -43,23 +43,43 @@
 (require 'supersonic-custom)
 (require 'supersonic-provider)
 
-(defconst supersonic-playback-operations
+(defconst supersonic-playback-core-operations
   '(start enqueue toggle-play next prev stop seek seek-fraction live-p status queue)
-  "The playback operations a backend can implement.
+  "The playback operations every bundled backend implements.
 `start' and `enqueue' each take a list of supersonic track ids, and
 may finish asynchronously, so a backend reports their failures itself;
 `seek' takes an offset in seconds, which may be negative;
 `seek-fraction' takes a position in the current track as a fraction
 between 0.0 and 1.0; `status' takes one of
 `supersonic-playback-status-keys'; the rest take no arguments.
-`status' and `queue' each return a promise.  A backend may leave
-operations out; calling one then reports that.")
+`status' and `queue' each return a promise.")
 
-(defconst supersonic-playback-status-keys '(track-id position paused)
+(defconst supersonic-playback-operations
+  (append supersonic-playback-core-operations
+          '(play-index remove move clear shuffle repeat volume))
+  "The playback operations a backend can implement.
+Those of `supersonic-playback-core-operations', plus the queue editing
+and playback mode ones, which a backend is more likely to leave out:
+
+- `play-index' takes a 0-based position in the queue and plays it.
+- `remove' takes a position and drops that entry from the queue.
+- `move' takes a position FROM and a position TO and moves the entry
+  at FROM so that it ends up at TO.
+- `clear' takes no arguments and drops every entry but the current one.
+- `shuffle' takes FLAG: non-nil shuffles the queue, nil restores the
+  order it had before.
+- `repeat' takes a MODE, nil, `queue' or `track'.
+- `volume' takes a DELTA in percent, which may be negative.
+
+A backend may leave operations out; calling one then reports that.")
+
+(defconst supersonic-playback-status-keys '(track-id position paused volume shuffle repeat)
   "The pieces of current playback state `supersonic-playback-status' answers.
 `track-id' is the supersonic id of whatever is playing, `position' its
 playback position in seconds, and `paused' non-nil if playback is
-paused.")
+paused.  `volume' is the volume in percent, `shuffle' non-nil while the
+queue is shuffled, and `repeat' the mode set by the `repeat'
+operation; a backend that does not know one of these answers nil.")
 
 (defvar supersonic-playback-track-change-hook nil
   "Hook run whenever the identity of what is playing may have changed.
@@ -381,6 +401,89 @@ Interactively SECONDS is the numeric prefix argument."
 Interactively SECONDS is the numeric prefix argument."
   (interactive "P")
   (supersonic-playback-seek (- (supersonic-playback--seek-step seconds))))
+
+;;;
+;;; Queue editing and playback modes
+;;;
+
+(defun supersonic-playback-play-index (index)
+  "Play the entry at 0-based INDEX of the play queue."
+  (supersonic-playback--call 'play-index index))
+
+(defun supersonic-playback-remove (index)
+  "Remove the entry at 0-based INDEX from the play queue."
+  (supersonic-playback--call 'remove index))
+
+(defun supersonic-playback-move (from to)
+  "Move the play queue entry at position FROM to position TO."
+  (supersonic-playback--call 'move from to))
+
+(defun supersonic-playback-clear ()
+  "Remove every entry but the current one from the play queue."
+  (supersonic-playback--call 'clear))
+
+(defun supersonic-playback-shuffle (flag)
+  "Shuffle the play queue if FLAG is non-nil, else restore its order."
+  (supersonic-playback--call 'shuffle flag))
+
+(defun supersonic-playback-repeat (mode)
+  "Set the repeat MODE: nil, `queue' or `track'."
+  (supersonic-playback--call 'repeat mode))
+
+(defun supersonic-playback-volume (delta)
+  "Change the volume by DELTA percent."
+  (supersonic-playback--call 'volume delta))
+
+(defun supersonic-playback--status-now (key)
+  "Return the active backend's current KEY, waiting for it."
+  (aio-wait-for (supersonic-playback-status key)))
+
+;;;###autoload
+(defun supersonic-toggle-shuffle ()
+  "Shuffle the play queue, or put it back in order if it is shuffled."
+  (interactive)
+  (let ((shuffle (not (supersonic-playback--status-now 'shuffle))))
+    (supersonic-playback-shuffle shuffle)
+    (message "Shuffle %s" (if shuffle "on" "off"))))
+
+;;;###autoload
+(defun supersonic-cycle-repeat ()
+  "Cycle the repeat mode: off, then the whole queue, then the current track."
+  (interactive)
+  (let ((mode (pcase (supersonic-playback--status-now 'repeat)
+                ('nil 'queue)
+                ('queue 'track)
+                (_ nil))))
+    (supersonic-playback-repeat mode)
+    (message "Repeat %s" (pcase mode ('queue "queue") ('track "track") (_ "off")))))
+
+;;;###autoload
+(defun supersonic-clear-queue ()
+  "Remove every track but the one playing from the play queue."
+  (interactive)
+  (supersonic-playback-clear))
+
+;;;###autoload
+(defun supersonic-volume-up (&optional step)
+  "Raise the volume by STEP percent, `supersonic-volume-step' by default.
+Interactively STEP is the numeric prefix argument."
+  (interactive "P")
+  (supersonic-playback-volume (if step (abs (prefix-numeric-value step)) supersonic-volume-step))
+  (supersonic-playback--report-volume))
+
+;;;###autoload
+(defun supersonic-volume-down (&optional step)
+  "Lower the volume by STEP percent, `supersonic-volume-step' by default.
+Interactively STEP is the numeric prefix argument."
+  (interactive "P")
+  (supersonic-playback-volume (- (if step (abs (prefix-numeric-value step)) supersonic-volume-step)))
+  (supersonic-playback--report-volume))
+
+(defun supersonic-playback--report-volume ()
+  "Say what the volume is now, once the backend knows."
+  (let ((volume (supersonic-playback--status-now 'volume)))
+    (when volume
+      (message "Volume %d%%" (round volume)))))
 
 (provide 'supersonic-playback)
 ;;; supersonic-playback.el ends here

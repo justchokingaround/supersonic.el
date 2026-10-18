@@ -76,6 +76,13 @@ right after it was stopped.")
 (defvar supersonic-mpv--pending-requests (make-hash-table)
   "Map of in-flight request_id (integer) to the callback awaiting its reply.")
 
+(defvar supersonic-mpv--shuffled nil
+  "Non-nil while mpv's playlist is shuffled, see `supersonic-mpv-shuffle'.")
+
+(defvar supersonic-mpv--repeat nil
+  "The repeat mode last set, see `supersonic-mpv-repeat'.
+Outlives mpv itself, and is applied again to the next mpv started.")
+
 (defvar supersonic--paused nil
   "Non-nil if mpv currently reports its \"pause\" property as true.
 Kept in sync by the `observe_property' in
@@ -101,6 +108,7 @@ Kept in sync by the `observe_property' in
   (setq supersonic-mpv--request-counter 0)
   (clrhash supersonic-mpv--pending-requests)
   (setq supersonic--paused nil)
+  (setq supersonic-mpv--shuffled nil)
   (run-hooks 'supersonic-playback-track-change-hook))
 
 (defun supersonic-mpv-live-p ()
@@ -153,7 +161,9 @@ Windows does not support; this is not implemented for windows-nt"))
                  (setq supersonic-mpv--socket nil)))))
       ;; Follow pause/resume, whoever triggered it.  mpv answers with the
       ;; current value right away, which also seeds `supersonic--paused'.
-      (supersonic-mpv-command "observe_property" 2 "pause")))
+      (supersonic-mpv-command "observe_property" 2 "pause")
+      (when supersonic-mpv--repeat
+        (supersonic-mpv--apply-repeat supersonic-mpv--repeat))))
   t)
 
 (defun supersonic--mpv-load-track (id url flag)
@@ -358,10 +368,65 @@ The mpv side of `supersonic-playback-queue'."
 The mpv side of `supersonic-playback-status'."
  (pcase key
    ('paused supersonic--paused)
+   ('shuffle supersonic-mpv--shuffled)
+   ('repeat supersonic-mpv--repeat)
+   ('volume (aio-await (supersonic-mpv-get-property "volume")))
    ('position (aio-await (supersonic-mpv-get-property "time-pos")))
    ('track-id
     (let ((entry (seq-find (lambda (e) (plist-get e :current)) (aio-await (supersonic-mpv-queue)))))
       (and entry (plist-get entry :track-id))))))
+
+;;;
+;;; Queue editing and playback modes
+;;;
+
+(defun supersonic-mpv--queue-changed ()
+  "Report that mpv's playlist was edited from here."
+  (run-hooks 'supersonic-playback-queue-change-hook))
+
+(defun supersonic-mpv-play-index (index)
+  "Play the entry at 0-based INDEX of mpv's playlist."
+  (supersonic-mpv-command "playlist-play-index" index))
+
+(defun supersonic-mpv-remove (index)
+  "Remove the entry at 0-based INDEX from mpv's playlist."
+  (when (supersonic-mpv-command "playlist-remove" index)
+    (supersonic-mpv--queue-changed)))
+
+(defun supersonic-mpv-move (from to)
+  "Move the entry at position FROM of mpv's playlist to position TO.
+mpv's `playlist-move' puts the entry before the one at its second
+argument, which for a move down is one further than TO."
+  (when (and (/= from to)
+             (supersonic-mpv-command "playlist-move" from (if (> to from) (1+ to) to)))
+    (supersonic-mpv--queue-changed)))
+
+(defun supersonic-mpv-clear ()
+  "Remove every entry but the current one from mpv's playlist."
+  (when (supersonic-mpv-command "playlist-clear")
+    (supersonic-mpv--queue-changed)))
+
+(defun supersonic-mpv-shuffle (flag)
+  "Shuffle mpv's playlist if FLAG is non-nil, else unshuffle it."
+  (when (supersonic-mpv-command (if flag "playlist-shuffle" "playlist-unshuffle"))
+    (setq supersonic-mpv--shuffled (and flag t))
+    (supersonic-mpv--queue-changed)))
+
+(defun supersonic-mpv--apply-repeat (mode)
+  "Set mpv's loop properties for repeat MODE."
+  (supersonic-mpv-command "set_property" "loop-file" (if (eq mode 'track) "inf" "no"))
+  (supersonic-mpv-command "set_property" "loop-playlist" (if (eq mode 'queue) "inf" "no")))
+
+(defun supersonic-mpv-repeat (mode)
+  "Set the repeat MODE, nil, `queue' or `track'.
+Remembered even while mpv is not running, for the next one started."
+  (setq supersonic-mpv--repeat mode)
+  (when (supersonic-mpv-live-p)
+    (supersonic-mpv--apply-repeat mode)))
+
+(defun supersonic-mpv-volume (delta)
+  "Change mpv's volume by DELTA percent."
+  (supersonic-mpv-command "add" "volume" delta))
 
 (supersonic-playback-register-backend
  'mpv
@@ -375,7 +440,14 @@ The mpv side of `supersonic-playback-status'."
    (seek-fraction . supersonic-mpv-seek-fraction)
    (live-p . supersonic-mpv-live-p)
    (status . supersonic-mpv-status)
-   (queue . supersonic-mpv-queue))
+   (queue . supersonic-mpv-queue)
+   (play-index . supersonic-mpv-play-index)
+   (remove . supersonic-mpv-remove)
+   (move . supersonic-mpv-move)
+   (clear . supersonic-mpv-clear)
+   (shuffle . supersonic-mpv-shuffle)
+   (repeat . supersonic-mpv-repeat)
+   (volume . supersonic-mpv-volume))
  :requires '(stream-url))
 
 (provide 'supersonic-mpv)

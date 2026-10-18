@@ -168,6 +168,11 @@ binds itself afterwards win."
   (define-key map (kbd "N") #'supersonic-show-now-playing)
   (define-key map (kbd "Q") #'supersonic-show-queue)
   (define-key map (kbd "M") #'supersonic)
+  (define-key map (kbd "+") #'supersonic-volume-up)
+  (define-key map (kbd "=") #'supersonic-volume-up)
+  (define-key map (kbd "-") #'supersonic-volume-down)
+  (define-key map (kbd "z") #'supersonic-toggle-shuffle)
+  (define-key map (kbd "R") #'supersonic-cycle-repeat)
   map)
 
 ;;;###autoload (autoload 'supersonic-command-map "supersonic" nil t 'keymap)
@@ -189,6 +194,12 @@ binds itself afterwards win."
     (define-key map (kbd "P") #'supersonic-podcasts)
     (define-key map (kbd "k") #'supersonic-playback-switch-backend)
     (define-key map (kbd "m") #'supersonic)
+    (define-key map (kbd "+") #'supersonic-volume-up)
+    (define-key map (kbd "=") #'supersonic-volume-up)
+    (define-key map (kbd "-") #'supersonic-volume-down)
+    (define-key map (kbd "z") #'supersonic-toggle-shuffle)
+    (define-key map (kbd "R") #'supersonic-cycle-repeat)
+    (define-key map (kbd "C") #'supersonic-clear-queue)
     map)
   "Prefix keymap of supersonic's commands, for binding to a key of your own.
 For example:
@@ -489,9 +500,54 @@ unless the entry brings its `:track' along; a failed lookup shows as
   (interactive)
   (supersonic-queue-fetch-and-render (current-buffer)))
 
+(defun supersonic-queue--index-at-point ()
+  "Return the 0-based queue position of the row at point.
+The rows are in queue order -- the columns cannot be sorted -- so this
+is the position of the row's entry in `tabulated-list-entries'.  The
+entry is matched with `eq', as the same track may be queued twice."
+  (let* ((entry (or (tabulated-list-get-entry) (user-error "No queue entry at point")))
+         (index (seq-position (mapcar #'cadr tabulated-list-entries) entry #'eq)))
+    (or index (user-error "No queue entry at point"))))
+
+(defun supersonic-queue-play-at-point ()
+  "Play the queue entry at point."
+  (interactive)
+  (supersonic-playback-play-index (supersonic-queue--index-at-point)))
+
+(defun supersonic-queue-remove-at-point ()
+  "Remove the queue entry at point from the play queue."
+  (interactive)
+  (supersonic-playback-remove (supersonic-queue--index-at-point)))
+
+(defun supersonic-queue--move-at-point (delta)
+  "Move the queue entry at point DELTA places, keeping point on it."
+  (let* ((from (supersonic-queue--index-at-point))
+         (to (max 0 (min (1- (length tabulated-list-entries)) (+ from delta)))))
+    (unless (= from to)
+      (supersonic-playback-move from to)
+      (forward-line (- to from)))))
+
+(defun supersonic-queue-move-up ()
+  "Move the queue entry at point one place towards the front."
+  (interactive)
+  (supersonic-queue--move-at-point -1))
+
+(defun supersonic-queue-move-down ()
+  "Move the queue entry at point one place towards the back."
+  (interactive)
+  (supersonic-queue--move-at-point 1))
+
 (defvar supersonic-queue-mode-map
   (let ((map (supersonic--define-common-keys (make-sparse-keymap))))
     (define-key map (kbd "g") #'supersonic-queue-refresh)
+    (define-key map (kbd "RET") #'supersonic-queue-play-at-point)
+    (define-key map (kbd "d") #'supersonic-queue-remove-at-point)
+    (define-key map (kbd "DEL") #'supersonic-queue-remove-at-point)
+    (define-key map (kbd "M-p") #'supersonic-queue-move-up)
+    (define-key map (kbd "M-n") #'supersonic-queue-move-down)
+    (define-key map (kbd "M-<up>") #'supersonic-queue-move-up)
+    (define-key map (kbd "M-<down>") #'supersonic-queue-move-down)
+    (define-key map (kbd "C") #'supersonic-clear-queue)
     map)
   "Keymap for `supersonic-queue-mode'.")
 
@@ -501,7 +557,7 @@ unless the entry brings its `:track' along; a failed lookup shows as
  "Supersonic Queue"
  "Major mode for the play queue opened by `supersonic-show-queue'.
 Mirrors the active backend's play queue, refreshed whenever it may have changed."
- (setq tabulated-list-format [("" 2 nil) ("Title" 40 t) ("Artist" 25 t) ("Album" 25 t)])
+ (setq tabulated-list-format [("" 2 nil) ("Title" 40 nil) ("Artist" 25 nil) ("Album" 25 nil)])
  (setq tabulated-list-padding 2)
  (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
  (supersonic--add-playback-hooks)
@@ -2080,6 +2136,11 @@ provider is missing."
    ("b" "Previous track" supersonic-prev-track)
    ("F" "Seek forward" supersonic-seek-forward :transient t)
    ("B" "Seek back" supersonic-seek-back :transient t)
+   ("z" "Toggle shuffle" supersonic-toggle-shuffle)
+   ("R" "Cycle repeat" supersonic-cycle-repeat)
+   ("+" "Volume up" supersonic-volume-up :transient t)
+   ("-" "Volume down" supersonic-volume-down :transient t)
+   ("C" "Clear queue" supersonic-clear-queue)
    ("k" "Switch backend" supersonic-playback-switch-backend)
    ("P" "Switch provider" supersonic-provider-switch)]])
 
