@@ -357,15 +357,23 @@ skipped, and so is every file `supersonic-local-ignore-regexp' matches."
    (supersonic-local--rebuild)
    (supersonic-local--write-file (supersonic-local--index-file)
                                  (list :version supersonic-local--index-version
+                                       :directories (supersonic-local--roots)
                                        :tracks (hash-table-values new)))
    (message "[Supersonic] Local library: %d track(s)%s" (hash-table-count new)
             (if (> probed 0) (format ", %d read anew" probed) ""))
    new))
 
+(defun supersonic-local--roots ()
+  "Return `supersonic-local-directories' as absolute directory names."
+  (mapcar (lambda (directory) (file-name-as-directory (expand-file-name directory)))
+          supersonic-local-directories))
+
 (defun supersonic-local--load-index ()
-  "Load the cached index, returning non-nil if there was a usable one."
+  "Load the cached index, returning non-nil if there was a usable one.
+One built for other `supersonic-local-directories' is not."
   (let ((data (supersonic-local--read-file (supersonic-local--index-file))))
-    (when (eql (plist-get data :version) supersonic-local--index-version)
+    (when (and (eql (plist-get data :version) supersonic-local--index-version)
+               (equal (plist-get data :directories) (supersonic-local--roots)))
       (let ((tracks (make-hash-table :test #'equal)))
         (dolist (track (plist-get data :tracks))
           (puthash (plist-get track :id) track tracks))

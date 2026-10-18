@@ -8811,6 +8811,24 @@ answer of nil marks the lyrics as needing none, so it is not asked again."
         (supersonic-lyrics--machine-translate nil)
         (should (= 2 asked))))))
 
+(ert-deftest supersonic-tests-local-index-is-tied-to-its-directories ()
+  "A cached index built for other directories is not used."
+  (require 'supersonic-local)
+  (let* ((supersonic-cache-path (make-temp-file "supersonic-cache" t))
+         (supersonic-local--tracks nil)
+         (supersonic-local-directories '("/old/")))
+    (unwind-protect
+        (progn
+          (supersonic-local--write-file (supersonic-local--index-file)
+                                        (list :version supersonic-local--index-version
+                                              :directories (supersonic-local--roots)
+                                              :tracks '((:id "/old/a.flac" :title "a"))))
+          (should (supersonic-local--load-index))
+          (setq supersonic-local-directories '("/new/")
+                supersonic-local--tracks nil)
+          (should-not (supersonic-local--load-index)))
+      (delete-directory supersonic-cache-path t))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here
