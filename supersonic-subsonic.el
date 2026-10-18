@@ -34,6 +34,7 @@
 ;;; Code:
 
 (require 'aio)
+(require 'cl-lib)
 (require 'seq)
 (require 'subr-x)
 (require 'url)
@@ -267,6 +268,51 @@ leaves the choice to the server."
   "Return the getCoverArt URL for cover art ART, scaled to SIZE."
   (supersonic-build-url "/getCoverArt.view" `(("id" . ,art) ("size" . ,(int-to-string size)))))
 
+(defun supersonic-subsonic--image-size (data)
+  "Return (WIDTH . HEIGHT) of the JPEG, PNG or WebP image in DATA, or nil.
+DATA is a unibyte string; only the header is read."
+  (cl-flet ((u8 (i) (aref data i))
+            (be16 (i) (+ (* 256 (aref data i)) (aref data (1+ i))))
+            (le16 (i) (+ (aref data i) (* 256 (aref data (1+ i)))))
+            (le24 (i) (+ (aref data i) (* 256 (aref data (1+ i))) (* 65536 (aref data (+ i 2))))))
+    (condition-case nil
+        (cond
+         ((string-prefix-p "\x89PNG" data)
+          (cons (+ (* 65536 (be16 16)) (be16 18)) (+ (* 65536 (be16 20)) (be16 22))))
+         ((and (string-prefix-p "RIFF" data) (equal (substring data 8 12) "WEBP"))
+          (pcase (substring data 12 16)
+            ("VP8X" (cons (1+ (le24 24)) (1+ (le24 27))))
+            ("VP8 " (cons (logand (le16 26) #x3fff) (logand (le16 28) #x3fff)))
+            ("VP8L" (let ((b (+ (u8 21) (* 256 (u8 22)) (* 65536 (u8 23)) (* 16777216 (u8 24)))))
+                      (cons (1+ (logand b #x3fff)) (1+ (logand (ash b -14) #x3fff)))))))
+         ((string-prefix-p "\xff\xd8" data)
+          (let ((i 2) (found nil))
+            (while (and (not found) (< (+ i 9) (length data)))
+              (if (/= (u8 i) #xff)
+                  (setq i (length data))
+                (let ((marker (u8 (1+ i))))
+                  (if (memq marker '(#xc0 #xc1 #xc2 #xc3 #xc5 #xc6 #xc7 #xc9 #xca #xcb #xcd #xce #xcf))
+                      (setq found (cons (be16 (+ i 7)) (be16 (+ i 5))))
+                    (setq i (+ i 2 (be16 (+ i 2))))))))
+            found)))
+      (error nil))))
+
+(defvar supersonic-subsonic--server-scales nil
+  "Non-nil once the server has sent cover art scaled to the size asked for.")
+
+(defun supersonic-subsonic--placeholder-p (data size)
+  "Return non-nil if DATA, asked for at SIZE, is a placeholder, not the art.
+Navidrome answers with an unscaled placeholder when it cannot get at
+an album's art in time, as under many requests at once.  Art much
+bigger than asked for is taken for that, but only once the server has
+been seen to scale art at all."
+  (let ((dimensions (supersonic-subsonic--image-size data)))
+    (when dimensions
+      (let ((largest (max (car dimensions) (cdr dimensions))))
+        (when (<= largest (* 1.1 size))
+          (setq supersonic-subsonic--server-scales t))
+        (and supersonic-subsonic--server-scales (> largest (* 1.5 size)))))))
+
 (aio-defun
  supersonic-subsonic--cover-art (art size)
  "Return a promise resolving to the bytes of cover art ART at SIZE.
@@ -277,8 +323,12 @@ Asks getCoverArt, which scales the image to SIZE on the server."
        (let ((err (plist-get status :error)))
          (when err
            (error "Failed to fetch cover art %s: %s" art (error-message-string err)))
-         (with-current-buffer buffer
-           (buffer-substring-no-properties (1+ url-http-end-of-headers) (point-max))))
+         (let ((data (with-current-buffer buffer
+                       (buffer-substring-no-properties (1+ url-http-end-of-headers) (point-max)))))
+           ;; Not to be cached as the art: it would stick for good.
+           (when (supersonic-subsonic--placeholder-p data size)
+             (error "Cover art %s is not available yet" art))
+           data))
      (kill-buffer buffer))))
 
 (aio-defun

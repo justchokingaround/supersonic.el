@@ -79,6 +79,19 @@
 (defvar-local supersonic-browse--images nil "Cache of tile images, by key, shape and state.")
 (defvar-local supersonic-browse--focus-overlay nil "Overlay on the track row in focus.")
 (defvar-local supersonic-browse--sem nil "Semaphore bounding the art fetches.")
+(defvar-local supersonic-browse--stops []
+  "Positions items take focus at, in buffer order.")
+(defvar-local supersonic-browse--stop-index nil
+  "Hash table of item key to its index in `supersonic-browse--stops'.")
+(defvar-local supersonic-browse--region 0
+  "Region the items being inserted belong to.")
+(defvar-local supersonic-browse--region-fresh nil
+  "Non-nil right after a heading started a region.")
+(defvar-local supersonic-browse--title-overlay nil
+  "Overlay on the name under the tile in focus.")
+(defvar-local supersonic-browse--bar-overlay nil
+  "Overlay drawing the accent bar of the track row in focus.")
+(defvar supersonic-browse-mode-map)
 
 ;;;
 ;;; Colours and measures
@@ -258,6 +271,7 @@ At X and Y, 0 by default.  FILE is resolved against the image's
 
 (defun supersonic-browse--heading (text &optional more-label more-action)
   "Insert section heading TEXT, with a MORE-LABEL button calling MORE-ACTION."
+  (supersonic-browse--new-region t)
   (insert "\n" (supersonic-browse--space supersonic-browse-margin)
           (propertize text 'face 'supersonic-browse-heading 'supersonic-browse-section t))
   (when more-label
@@ -266,8 +280,10 @@ At X and Y, 0 by default.  FILE is resolved against the image's
                                            (- (supersonic-browse--available-width)
                                               (supersonic--string-pixel-width label))))
               (apply #'propertize label 'face 'supersonic-browse-link
-                     (supersonic-browse--item-properties (list 'more more-label) (list :action more-action)
-                                                         'supersonic-browse-focus t)))))
+                     (supersonic-browse--item-properties (list 'more more-label supersonic-browse--region)
+                                                         (list :action more-action)
+                                                         'supersonic-browse-focus t
+                                                         'supersonic-browse-region supersonic-browse--region)))))
   (insert (propertize "\n" 'line-height 1.6)))
 
 (defvar-local supersonic-browse--grid-count 0 "Grids inserted so far on the page.")
@@ -275,6 +291,7 @@ At X and Y, 0 by default.  FILE is resolved against the image's
 (defun supersonic-browse--insert-grid (kind items shape &optional max-rows)
   "Insert ITEMS, all of KIND (`artist' or `album'), as a grid of SHAPE tiles.
 At most MAX-ROWS rows of them, if given."
+  (supersonic-browse--new-region)
   (let* ((size supersonic-browse-tile-size)
          (gap supersonic-browse-gap)
          (columns (max 1 (/ (+ (supersonic-browse--available-width) gap) (+ size gap))))
@@ -289,10 +306,11 @@ At most MAX-ROWS rows of them, if given."
        (insert (supersonic-browse--space supersonic-browse-margin))
        (cl-loop
         for item in row for c from 0 do
-        (let ((key (list kind (plist-get item :id))))
+        (let ((key (list kind (plist-get item :id) supersonic-browse--region)))
           (insert (apply #'propertize "*" 'display (supersonic-browse--tile-image item shape nil)
                          (supersonic-browse--item-properties
                           key item 'supersonic-browse-focus t 'supersonic-browse-tile shape
+                          'supersonic-browse-region supersonic-browse--region
                           'supersonic-browse-grid grid 'supersonic-browse-row r 'supersonic-browse-col c
                           'help-echo (or (plist-get item :name) (plist-get item :title)))))
           (insert (supersonic-browse--space gap))))
@@ -301,12 +319,14 @@ At most MAX-ROWS rows of them, if given."
                          (cons 'supersonic-browse-tile-subtitle #'supersonic-browse--subtitle)))
        (cl-loop
         for item in row for c from 0 do
-        (let ((key (list kind (plist-get item :id)))
+        (let ((key (list kind (plist-get item :id) supersonic-browse--region))
               (text (propertize (funcall (cdr line) item) 'face (car line))))
           (insert (supersonic-browse--align (+ supersonic-browse-margin (* c (+ size gap))))
                   (apply #'propertize (supersonic-browse--fit text (- size 4))
                          (supersonic-browse--item-properties
                           key item 'supersonic-browse-grid grid 'supersonic-browse-row r 'supersonic-browse-col c
+                          'supersonic-browse-region supersonic-browse--region
+                          'supersonic-browse-title (and (eq (car line) 'supersonic-browse-tile-title) key)
                           ;; Without images the title is what gets focus.
                           'supersonic-browse-focus (and (not graphic) (eq (car line) 'supersonic-browse-tile-title))
                           'face (car line))))))
@@ -332,51 +352,88 @@ of the artist's name over and over."
    ((plist-get item :year) (number-to-string (plist-get item :year)))
    (t "")))
 
+(defun supersonic-browse--row-strut ()
+  "Return an invisible stretch giving a track row its height, its text centred.
+`line-height' would put all the room above the text."
+  (let* ((height (round (* 1.75 (frame-char-height))))
+         (info (ignore-errors (font-info (face-font 'default))))
+         (ascent (if info (aref info 4) (* 0.8 (frame-char-height))))
+         (descent (if info (aref info 5) (* 0.2 (frame-char-height))))
+         (above (+ (/ height 2.0) (/ (- ascent descent) 2.0))))
+    (propertize " " 'display `(space :width (0) :height (,height)
+                                     :ascent ,(max 1 (min 100 (round (* 100 (/ above height)))))))))
+
+(defun supersonic-browse--numbering (tracks)
+  "Return the number to show for each of TRACKS.
+Their own track numbers when every one has one and no two collide on
+the same disc, their place in the list otherwise."
+  (let ((seen (make-hash-table :test #'equal)))
+    (if (and (seq-every-p (lambda (track) (natnump (plist-get track :track))) tracks)
+             (seq-every-p (lambda (track)
+                            (let ((key (cons (or (plist-get track :disc) 1) (plist-get track :track))))
+                              (prog1 (not (gethash key seen)) (puthash key t seen))))
+                          tracks))
+        (mapcar (lambda (track) (plist-get track :track)) tracks)
+      (number-sequence 1 (length tracks)))))
+
 (defun supersonic-browse--insert-tracks (tracks &optional show-album)
-  "Insert TRACKS as a numbered list; with SHOW-ALBUM, each track's album too."
+  "Insert TRACKS as a numbered list; with SHOW-ALBUM, each track's album too.
+An album over several discs gets a heading per disc."
+  (supersonic-browse--new-region)
   (let* ((ids (mapcar (lambda (track) (plist-get track :id)) tracks))
+         (char (frame-char-width))
          (right (+ supersonic-browse-margin (supersonic-browse--available-width)))
-         (number-right (+ supersonic-browse-margin (* 3 (frame-char-width))))
-         (title-x (+ supersonic-browse-margin (* 4 (frame-char-width))))
+         (marker-x supersonic-browse-margin)
+         (number-right (+ supersonic-browse-margin (* 5 char)))
+         (title-x (+ number-right (* 2 char)))
+         (numbers (supersonic-browse--numbering tracks))
+         (discs (delete-dups (mapcar (lambda (track) (or (plist-get track :disc) 1)) tracks)))
          (album-artist (and (not show-album) (plist-get (car tracks) :artist)))
+         (strut (supersonic-browse--row-strut))
+         (disc nil)
          (index 0))
-    (dolist (track tracks)
-      (let* ((playing (and supersonic-browse--playing (equal (plist-get track :id) supersonic-browse--playing)))
-             (duration (supersonic-browse--duration (plist-get track :duration)))
-             (duration-x (- right (supersonic--string-pixel-width duration)))
-             (detail (string-join
-                      (delq nil (list (and (or show-album (not (equal (plist-get track :artist) album-artist)))
-                                           (plist-get track :artist))
-                                      (and show-album (plist-get track :album))))
-                      " · "))
-             (title-room (- duration-x title-x (* 2 (frame-char-width))))
-             (title (propertize (or (plist-get track :title) "?")
-                                'face (if playing 'supersonic-browse-playing 'supersonic-browse-track)))
-             (detail (and (not (string-empty-p detail)) (propertize (concat "  " detail) 'face 'shadow)))
-             (shown (supersonic-browse--fit (concat title detail) title-room))
-             (properties (supersonic-browse--item-properties
-                          (list 'track (plist-get track :id) index) track
-                          'supersonic-browse-ids ids 'supersonic-browse-index index)))
-        (insert (apply #'propertize
-                       (concat (let ((number (if playing
-                                                 (propertize "▶" 'face 'supersonic-browse-playing)
-                                               (propertize (number-to-string (or (plist-get track :track) (1+ index)))
-                                                           'face 'supersonic-browse-track-number))))
-                                 (concat (supersonic-browse--align (- number-right (supersonic--string-pixel-width number)))
-                                         number))
-                               (supersonic-browse--align title-x)
-                               shown
-                               (supersonic-browse--align duration-x)
-                               (propertize duration 'face 'supersonic-browse-track-number))
-                       properties))
-        ;; Point rests on the row's start; that is what is focusable.
-        (put-text-property (- (point) (length shown) 4 (length duration)) (1+ (- (point) (length shown) 4 (length duration)))
-                           'supersonic-browse-focus nil)
-        (save-excursion
-          (forward-line 0)
-          (put-text-property (point) (1+ (point)) 'supersonic-browse-focus t))
-        (insert (apply #'propertize "\n" 'line-height 1.5 properties))
-        (setq index (1+ index))))))
+    (cl-loop
+     for track in tracks for number in numbers do
+     (when (and (cdr discs) (not show-album) (not (eql disc (or (plist-get track :disc) 1))))
+       (setq disc (or (plist-get track :disc) 1))
+       (insert (supersonic-browse--align title-x)
+               (propertize (format "Disc %d" disc) 'face 'supersonic-browse-hint)
+               (propertize "\n" 'line-height 1.6)))
+     (let* ((playing (and supersonic-browse--playing (equal (plist-get track :id) supersonic-browse--playing)))
+            (number (propertize (number-to-string number)
+                                'face (if playing 'supersonic-browse-playing 'supersonic-browse-track-number)))
+            (duration (supersonic-browse--duration (plist-get track :duration)))
+            (duration-x (- right (supersonic--string-pixel-width duration)))
+            (detail (string-join
+                     (delq nil (list (and (or show-album (not (equal (plist-get track :artist) album-artist)))
+                                          (plist-get track :artist))
+                                     (and show-album (plist-get track :album))))
+                     " · "))
+            (title (propertize (or (plist-get track :title) "?")
+                               'face (if playing 'supersonic-browse-playing 'supersonic-browse-track)))
+            (detail (and (not (string-empty-p detail)) (propertize (concat "   " detail) 'face 'shadow)))
+            (shown (supersonic-browse--fit (concat title detail) (- duration-x title-x (* 2 char))))
+            (properties (supersonic-browse--item-properties
+                         (list 'track (plist-get track :id) index) track
+                         'supersonic-browse-ids ids 'supersonic-browse-index index
+                         'supersonic-browse-region supersonic-browse--region)))
+       (insert (apply #'propertize
+                      (concat strut
+                              (supersonic-browse--align marker-x)
+                              (if playing (propertize "▶" 'face 'supersonic-browse-playing) " ")
+                              (supersonic-browse--align (- number-right (supersonic--string-pixel-width number)))
+                              number
+                              (supersonic-browse--align title-x)
+                              shown
+                              (supersonic-browse--align duration-x)
+                              (propertize duration 'face 'supersonic-browse-track-number)
+                              "\n")
+                      properties))
+       ;; The row takes focus at its start.
+       (save-excursion
+         (forward-line -1)
+         (put-text-property (point) (1+ (point)) 'supersonic-browse-focus t))
+       (setq index (1+ index))))))
 
 ;;;; The header of an artist or album page
 
@@ -404,7 +461,10 @@ are one SVG with play, shuffle and queue buttons drawn in, clickable
 through the image's map."
   (let* ((graphic (supersonic-browse--graphic-p))
          (key '(page))
-         (properties (supersonic-browse--item-properties key item 'supersonic-browse-focus t)))
+         (properties (progn
+                       (supersonic-browse--new-region)
+                       (supersonic-browse--item-properties key item 'supersonic-browse-focus t
+                                                           'supersonic-browse-region supersonic-browse--region))))
     (if (not graphic)
         (insert (apply #'propertize
                        (concat (supersonic-browse--space supersonic-browse-margin)
@@ -541,12 +601,24 @@ through the image's map."
                                        map))))
        (unless (zerop steps)
          (insert (propertize "  ›  " 'face 'supersonic-browse-trail)))))
-    (let ((hints (propertize "RET open  P play  s shuffle  a queue  l back  / search  ? keys" 'face 'supersonic-browse-hint)))
+    (let ((hints (propertize (supersonic-browse--hints) 'face 'supersonic-browse-hint)))
       (when (> (- (supersonic-browse--available-width) (supersonic--string-pixel-width hints)) 300)
         (insert (supersonic-browse--align (- (+ supersonic-browse-margin (supersonic-browse--available-width))
                                              (supersonic--string-pixel-width hints)))
                 hints)))
     (insert (propertize "\n" 'line-height 1.8))))
+
+(defun supersonic-browse--hints ()
+  "Return the key hints, read off the keys actually bound."
+  (mapconcat
+   (lambda (pair)
+     (let ((key (where-is-internal (car pair) supersonic-browse-mode-map t)))
+       (if key (concat (key-description key) " " (cdr pair)) "")))
+   '((supersonic-browse-open . "open") (supersonic-browse-play . "play")
+     (supersonic-browse-shuffle . "shuffle") (supersonic-browse-enqueue . "queue")
+     (supersonic-browse-next-section . "section") (supersonic-browse-back . "back")
+     (supersonic-browse-search . "search") (describe-mode . "keys"))
+   "   "))
 
 (defun supersonic-browse--title (title &optional subtitle)
   "Insert a page TITLE, with SUBTITLE beside it."
@@ -560,13 +632,15 @@ through the image's map."
   "Insert the home page from CONTENT."
   (supersonic-browse--title (supersonic-browse--greeting))
   (insert (supersonic-browse--space supersonic-browse-margin))
+  (supersonic-browse--new-region)
   (dolist (button `(("▶ Surprise me" . supersonic-browse-surprise)
                     ("Artists" . supersonic-browse-artists)
                     ("Search" . supersonic-browse-search)))
     (insert (apply #'propertize (concat " " (car button) " ")
                    'face 'supersonic-browse-button
                    (supersonic-browse--item-properties (list 'button (cdr button)) (list :action (cdr button))
-                                                       'supersonic-browse-focus t))
+                                                       'supersonic-browse-focus t
+                                                       'supersonic-browse-region supersonic-browse--region))
             "  "))
   (insert "\n")
   (let ((sections (plist-get content :sections)))
@@ -646,7 +720,12 @@ through the image's map."
         (start (window-start (supersonic-browse--window))))
     (erase-buffer)
     (setq supersonic-browse--grid-count 0
+          supersonic-browse--region 0
+          supersonic-browse--region-fresh nil
           supersonic-browse--width (window-body-width (supersonic-browse--window) t))
+    (dolist (overlay (list supersonic-browse--title-overlay supersonic-browse--bar-overlay
+                           supersonic-browse--focus-overlay))
+      (when overlay (delete-overlay overlay)))
     (insert (propertize "\n" 'line-height 1.4))
     (supersonic-browse--render-trail)
     (if (not supersonic-browse--content)
@@ -654,9 +733,9 @@ through the image's map."
                 (propertize "Loading…" 'face 'supersonic-browse-hint) "\n")
       (supersonic-browse--render-page supersonic-browse--content))
     (insert "\n")
-    (goto-char (or (and selected (supersonic-browse--find selected))
-                   (supersonic-browse--next-focus (point-min))
-                   (point-min)))
+    (supersonic-browse--index-stops)
+    (goto-char (let ((i (or (supersonic-browse--key-index selected) 0)))
+                 (if (< i (supersonic-browse--stop-count)) (aref supersonic-browse--stops i) (point-min))))
     (when (get-buffer-window (current-buffer))
       (set-window-start (get-buffer-window (current-buffer))
                         (if (and selected (< start (point))) start (point-min))
@@ -675,10 +754,19 @@ through the image's map."
       (let ((item (get-text-property pos 'supersonic-browse-item))
             (size (cond ((get-text-property pos 'supersonic-browse-tile) (* 2 supersonic-browse-tile-size))
                         ((equal (get-text-property pos 'supersonic-browse-key) '(page)) supersonic-now-playing-art-size))))
-        (when (and size item (plist-get item :art) (not (supersonic-browse--art-file item size)))
+        (when (and size item (plist-get item :art) (not (supersonic-browse--art-file item size))
+                   (not (supersonic-browse--art-failed-p (plist-get item :art) size)))
           (push (cons item size) wanted))))
     (seq-uniq wanted (lambda (a b) (and (equal (plist-get (car a) :art) (plist-get (car b) :art))
                                         (= (cdr a) (cdr b)))))))
+
+(defvar supersonic-browse--art-failures (make-hash-table :test #'equal)
+  "When fetching each (ART . SIZE) last failed, to wait before trying again.")
+
+(defun supersonic-browse--art-failed-p (art size)
+  "Return non-nil if fetching ART at SIZE failed less than five minutes ago."
+  (let ((when (gethash (cons art size) supersonic-browse--art-failures)))
+    (and when (< (- (float-time) when) 300))))
 
 (defun supersonic-browse--fetch-art ()
   "Fetch the art the page lacks, redrawing the page as it arrives."
@@ -693,6 +781,9 @@ through the image's map."
         (let ((promise (supersonic--fetch-art-throttled supersonic-browse--sem (plist-get (car pair) :art) (cdr pair))))
           (aio-listen promise
                       (lambda (_)
+                        (unless (file-exists-p (supersonic-art-cache-file (plist-get (car pair) :art) (cdr pair)))
+                          (puthash (cons (plist-get (car pair) :art) (cdr pair)) (float-time)
+                                   supersonic-browse--art-failures))
                         ;; Redraw once a burst of arrivals settles, not per cover.
                         (when (and (buffer-live-p buff) (not timer))
                           (setq timer
@@ -725,164 +816,237 @@ through the image's map."
 ;;; Focus and moving about
 ;;;
 
-(defun supersonic-browse--focusable-p (pos)
-  "Return non-nil if POS is where an item takes focus."
-  (and pos (< pos (point-max)) (get-text-property pos 'supersonic-browse-focus)))
+;; Where items take focus is indexed once per layout, in
+;; `supersonic-browse--stops', so moving about is a lookup, not a scan.
+;; Items are grouped in regions -- the home page's buttons, each section,
+;; an artist's or album's header, a tracklist -- which TAB moves between.
 
-(defun supersonic-browse--next-focus (pos)
-  "Return the first focusable position after POS, or nil."
-  (let ((next pos))
-    (while (and (setq next (next-single-property-change next 'supersonic-browse-focus))
-                (not (supersonic-browse--focusable-p next))))
-    (if (and (= pos (point-min)) (supersonic-browse--focusable-p pos)) pos next)))
 
-(defun supersonic-browse--previous-focus (pos)
-  "Return the last focusable position before POS, or nil."
-  (let ((prev pos))
-    (while (and (setq prev (previous-single-property-change prev 'supersonic-browse-focus))
-                (not (supersonic-browse--focusable-p prev))))
-    (and prev (supersonic-browse--focusable-p prev)
-         ;; The change lands after the focusable run; step to its start.
-         (or (previous-single-property-change (1+ prev) 'supersonic-browse-focus) prev))))
+(defun supersonic-browse--new-region (&optional by-heading)
+  "Start a new region of items, unless a heading BY-HEADING just did."
+  (if supersonic-browse--region-fresh
+      (setq supersonic-browse--region-fresh nil)
+    (cl-incf supersonic-browse--region)
+    (setq supersonic-browse--region-fresh by-heading)))
 
-(defun supersonic-browse--find (key)
-  "Return the focusable position of the item KEY, or nil."
-  (let ((pos (point-min)) (found nil))
-    (while (and (not found) (setq pos (supersonic-browse--next-focus pos)))
-      (when (equal (get-text-property pos 'supersonic-browse-key) key)
-        (setq found pos)))
-    found))
+(defun supersonic-browse--index-stops ()
+  "Index the positions items take focus at, once the page is laid out."
+  (let ((stops nil)
+        (index (make-hash-table :test #'equal))
+        (pos (point-min)))
+    (when (get-text-property pos 'supersonic-browse-focus)
+      (push pos stops))
+    (while (setq pos (next-single-property-change pos 'supersonic-browse-focus))
+      (when (get-text-property pos 'supersonic-browse-focus)
+        (push pos stops)))
+    (setq supersonic-browse--stops (vconcat (nreverse stops)))
+    (dotimes (i (length supersonic-browse--stops))
+      (let ((key (get-text-property (aref supersonic-browse--stops i) 'supersonic-browse-key)))
+        (unless (gethash key index)
+          (puthash key i index))))
+    (setq supersonic-browse--stop-index index)))
 
-(defun supersonic-browse--focus-start (pos)
-  "Return the start of the focusable item around POS, or nil."
-  (when pos
-    (let ((key (get-text-property pos 'supersonic-browse-key)))
-      (and key (supersonic-browse--find key)))))
+(defun supersonic-browse--stop-count ()
+  "Return how many items can take focus."
+  (length supersonic-browse--stops))
+
+(defun supersonic-browse--prop (i property)
+  "Return PROPERTY of the item at stop I."
+  (get-text-property (aref supersonic-browse--stops i) property))
+
+(defun supersonic-browse--key-index (key)
+  "Return the stop index of the item KEY, or nil."
+  (and key supersonic-browse--stop-index (gethash key supersonic-browse--stop-index)))
+
+(defun supersonic-browse--current-index ()
+  "Return the stop index of the item at point, else of the last before point."
+  (or (supersonic-browse--key-index (get-text-property (point) 'supersonic-browse-key))
+      (let ((i (1- (supersonic-browse--stop-count))))
+        (while (and (> i 0) (> (aref supersonic-browse--stops i) (point)))
+          (setq i (1- i)))
+        (max 0 i))))
+
+(defun supersonic-browse--goto-index (i)
+  "Focus the item at stop I, if there is one."
+  (when (and i (>= i 0) (< i (supersonic-browse--stop-count)))
+    (goto-char (aref supersonic-browse--stops i))
+    (supersonic-browse--update-focus)
+    t))
+
+(defun supersonic-browse--blend (a b amount)
+  "Return colour A mixed into colour B by AMOUNT, 0 to 1."
+  (let ((ra (color-name-to-rgb a)) (rb (color-name-to-rgb b)))
+    (if (and ra rb)
+        (apply #'color-rgb-to-hex
+               (append (cl-mapcar (lambda (x y) (+ (* amount x) (* (- 1 amount) y))) ra rb) '(2)))
+      b)))
+
+(defun supersonic-browse--paint (pos on)
+  "Show the item taking focus at POS as in focus if ON, else as not."
+  (let ((inhibit-read-only t)
+        (key (get-text-property pos 'supersonic-browse-key))
+        (shape (get-text-property pos 'supersonic-browse-tile)))
+    (when shape
+      (put-text-property pos (1+ pos) 'display
+                         (supersonic-browse--tile-image (get-text-property pos 'supersonic-browse-item) shape on)))
+    (when on
+      (let ((title (save-excursion
+                     (goto-char (1+ pos))
+                     (let ((match (text-property-search-forward 'supersonic-browse-title key t)))
+                       (and match (cons (prop-match-beginning match) (prop-match-end match)))))))
+        (unless supersonic-browse--title-overlay
+          (setq supersonic-browse--title-overlay (make-overlay 1 1))
+          (overlay-put supersonic-browse--title-overlay 'face '(:inherit (supersonic-browse-accent bold)))
+          (setq supersonic-browse--bar-overlay (make-overlay 1 1))
+          (setq supersonic-browse--focus-overlay (make-overlay 1 1)))
+        (if (and shape title)
+            (move-overlay supersonic-browse--title-overlay (car title) (cdr title))
+          (delete-overlay supersonic-browse--title-overlay))
+        (if (eq (car-safe key) 'track)
+            (let ((start (save-excursion (goto-char pos) (line-beginning-position)))
+                  (end (save-excursion (goto-char pos) (1+ (line-end-position))))
+                  (accent (supersonic-browse--accent)))
+              (overlay-put supersonic-browse--focus-overlay 'face
+                           `(:background ,(supersonic-browse--blend accent (supersonic-browse--bg) 0.16) :extend t))
+              (move-overlay supersonic-browse--focus-overlay start end)
+              (overlay-put supersonic-browse--bar-overlay 'before-string
+                           (concat (propertize " " 'display `(space :align-to (,(- supersonic-browse-margin 18))))
+                                   (propertize " " 'display '(space :width (4)) 'face `(:background ,accent))))
+              (move-overlay supersonic-browse--bar-overlay start start))
+          (delete-overlay supersonic-browse--focus-overlay)
+          (delete-overlay supersonic-browse--bar-overlay))))))
 
 (defun supersonic-browse--update-focus ()
-  "Show which item is in focus: ringed if a tile, highlighted if a row."
-  (let* ((key (get-text-property (point) 'supersonic-browse-key)))
+  "Show which item is in focus: ringed and named if a tile, highlighted if a row."
+  (let ((key (get-text-property (point) 'supersonic-browse-key)))
     (unless (equal key supersonic-browse--selected)
-      (let ((inhibit-read-only t)
-            (old (and supersonic-browse--selected (supersonic-browse--find supersonic-browse--selected))))
-        (when (and old (get-text-property old 'supersonic-browse-tile))
-          (put-text-property old (1+ old) 'display
-                             (supersonic-browse--tile-image (get-text-property old 'supersonic-browse-item)
-                                                            (get-text-property old 'supersonic-browse-tile) nil)))
+      (let ((old (supersonic-browse--key-index supersonic-browse--selected))
+            (new (supersonic-browse--key-index key)))
+        (when old
+          (supersonic-browse--paint (aref supersonic-browse--stops old) nil))
         (setq supersonic-browse--selected key)
-        (let ((new (and key (supersonic-browse--find key))))
-          (when (and new (get-text-property new 'supersonic-browse-tile))
-            (put-text-property new (1+ new) 'display
-                               (supersonic-browse--tile-image (get-text-property new 'supersonic-browse-item)
-                                                              (get-text-property new 'supersonic-browse-tile) t)))
-          (unless supersonic-browse--focus-overlay
-            (setq supersonic-browse--focus-overlay (make-overlay 1 1))
-            (overlay-put supersonic-browse--focus-overlay 'face 'supersonic-browse-focus))
-          (if (and new (eq (car-safe key) 'track))
-              (move-overlay supersonic-browse--focus-overlay
-                            (save-excursion (goto-char new) (line-beginning-position))
-                            (save-excursion (goto-char new) (1+ (line-end-position))))
-            (delete-overlay supersonic-browse--focus-overlay)))))))
+        (when new
+          (supersonic-browse--paint (aref supersonic-browse--stops new) t))))))
 
 (defun supersonic-browse--post-command ()
-  "Keep point on an item and the focus shown, after every command."
-  (when (eq major-mode 'supersonic-browse-mode)
-    (unless (get-text-property (point) 'supersonic-browse-key)
-      (let ((next (or (supersonic-browse--next-focus (point)) (supersonic-browse--previous-focus (point)))))
-        (when (and next (memq this-command '(next-line previous-line forward-char backward-char
-                                                       scroll-up-command scroll-down-command)))
-          (goto-char next))))
-    (supersonic-browse--update-focus)))
-
-(defun supersonic-browse--goto (pos)
-  "Move point to POS, if any, and show the focus there."
-  (when pos
-    (goto-char pos)
-    (supersonic-browse--update-focus)))
+  "Keep the focus shown where point is, after every command."
+  (when (and (eq major-mode 'supersonic-browse-mode)
+             (not (get-text-property (point) 'supersonic-browse-focus))
+             (get-text-property (point) 'supersonic-browse-key))
+    ;; Clicked or moved onto a name: the tile it names takes focus.
+    (let ((i (supersonic-browse--key-index (get-text-property (point) 'supersonic-browse-key))))
+      (when i (goto-char (aref supersonic-browse--stops i)))))
+  (supersonic-browse--update-focus))
 
 (defun supersonic-browse-next ()
-  "Move to the next item."
+  "Focus the next item."
   (interactive)
-  (supersonic-browse--goto (supersonic-browse--next-focus (supersonic-browse--focus-end (point)))))
+  (supersonic-browse--goto-index (min (1+ (supersonic-browse--current-index)) (1- (supersonic-browse--stop-count)))))
 
 (defun supersonic-browse-previous ()
-  "Move to the previous item."
+  "Focus the previous item."
   (interactive)
-  (supersonic-browse--goto (supersonic-browse--focus-start
-                            (supersonic-browse--previous-focus (or (supersonic-browse--focus-start (point)) (point))))))
+  (supersonic-browse--goto-index (max 0 (1- (supersonic-browse--current-index)))))
 
-(defun supersonic-browse--focus-end (pos)
-  "Return the end of the focusable run at POS."
-  (or (next-single-property-change pos 'supersonic-browse-focus) (point-max)))
+(defun supersonic-browse-first ()
+  "Focus the first item."
+  (interactive)
+  (supersonic-browse--goto-index 0)
+  (goto-char (point-min))
+  (supersonic-browse--goto-index 0))
 
-(defun supersonic-browse--grid-target (grid row col)
-  "Return the tile of GRID at ROW and column COL, or the nearest before."
-  (let ((pos (point-min)) (best nil))
-    (while (setq pos (supersonic-browse--next-focus pos))
-      (when (and (eql (get-text-property pos 'supersonic-browse-grid) grid)
-                 (eql (get-text-property pos 'supersonic-browse-row) row)
-                 (<= (get-text-property pos 'supersonic-browse-col) col))
-        (setq best pos)))
+(defun supersonic-browse-last ()
+  "Focus the last item."
+  (interactive)
+  (supersonic-browse--goto-index (1- (supersonic-browse--stop-count))))
+
+(defun supersonic-browse--grid-stop (grid row col)
+  "Return the stop of GRID's tile at ROW and column COL, or the last before it."
+  (let ((best nil))
+    (dotimes (i (supersonic-browse--stop-count))
+      (when (and (eql (supersonic-browse--prop i 'supersonic-browse-grid) grid)
+                 (eql (supersonic-browse--prop i 'supersonic-browse-row) row)
+                 (<= (supersonic-browse--prop i 'supersonic-browse-col) col))
+        (setq best i)))
     best))
 
 (defun supersonic-browse-down ()
-  "Move to the item below."
+  "Focus the item below: the tile in this column a grid row down, or the row below."
   (interactive)
-  (let ((grid (get-text-property (point) 'supersonic-browse-grid)))
-    (supersonic-browse--goto
-     (or (and grid (supersonic-browse--grid-target grid (1+ (get-text-property (point) 'supersonic-browse-row))
-                                                   (get-text-property (point) 'supersonic-browse-col)))
-         (let ((pos (supersonic-browse--focus-end (point))))
-           ;; Past the rest of this grid row, if in one.
-           (while (and grid (setq pos (supersonic-browse--next-focus pos))
-                       (eql (get-text-property pos 'supersonic-browse-grid) grid))
-             (setq pos (supersonic-browse--focus-end pos)))
-           (if grid pos (supersonic-browse--next-focus (supersonic-browse--focus-end (point)))))))))
+  (let* ((i (supersonic-browse--current-index))
+         (n (supersonic-browse--stop-count))
+         (grid (and (> n 0) (supersonic-browse--prop i 'supersonic-browse-grid))))
+    (supersonic-browse--goto-index
+     (or (and grid (supersonic-browse--grid-stop grid (1+ (supersonic-browse--prop i 'supersonic-browse-row))
+                                                 (supersonic-browse--prop i 'supersonic-browse-col)))
+         (let ((j (1+ i))
+               (line-end (save-excursion (goto-char (aref supersonic-browse--stops i)) (line-end-position))))
+           ;; Past the rest of this grid, or of this line of buttons.
+           (while (and (< j n)
+                       (if grid
+                           (eql (supersonic-browse--prop j 'supersonic-browse-grid) grid)
+                         (<= (aref supersonic-browse--stops j) line-end)))
+             (setq j (1+ j)))
+           (and (< j n) j))))))
 
 (defun supersonic-browse-up ()
-  "Move to the item above."
+  "Focus the item above: the tile in this column a grid row up, or the row above."
   (interactive)
-  (let ((grid (get-text-property (point) 'supersonic-browse-grid))
-        (row (get-text-property (point) 'supersonic-browse-row)))
-    (supersonic-browse--goto
-     (or (and grid (> row 0)
-              (supersonic-browse--grid-target grid (1- row) (get-text-property (point) 'supersonic-browse-col)))
-         (let ((pos (supersonic-browse--focus-start (point))))
-           (while (and grid (setq pos (supersonic-browse--previous-focus pos))
-                       (eql (get-text-property pos 'supersonic-browse-grid) grid)))
-           (let* ((target (if grid pos (supersonic-browse--previous-focus pos)))
-                  (target (supersonic-browse--focus-start target))
-                  (other (and target (get-text-property target 'supersonic-browse-grid))))
-             ;; Into a grid from below: its last row, the same column.
-             (if (and other (get-text-property (point) 'supersonic-browse-col))
-                 (or (supersonic-browse--grid-target other (get-text-property target 'supersonic-browse-row)
-                                                     (get-text-property (point) 'supersonic-browse-col))
-                     target)
-               target)))))))
+  (let* ((i (supersonic-browse--current-index))
+         (n (supersonic-browse--stop-count))
+         (grid (and (> n 0) (supersonic-browse--prop i 'supersonic-browse-grid)))
+         (row (and grid (supersonic-browse--prop i 'supersonic-browse-row)))
+         (col (and grid (supersonic-browse--prop i 'supersonic-browse-col))))
+    (supersonic-browse--goto-index
+     (or (and grid (> row 0) (supersonic-browse--grid-stop grid (1- row) col))
+         (let ((j (1- i))
+               (line-start (save-excursion (goto-char (aref supersonic-browse--stops i)) (line-beginning-position))))
+           (while (and (>= j 0)
+                       (if grid
+                           (eql (supersonic-browse--prop j 'supersonic-browse-grid) grid)
+                         (>= (aref supersonic-browse--stops j) line-start)))
+             (setq j (1- j)))
+           (when (>= j 0)
+             (let ((other (supersonic-browse--prop j 'supersonic-browse-grid)))
+               ;; Into a grid from below: its last row, the same column.
+               (or (and other col (supersonic-browse--grid-stop other (supersonic-browse--prop j 'supersonic-browse-row) col))
+                   j))))))))
+
+(defun supersonic-browse--region-first (region)
+  "Return the first stop of REGION, past a \"See all\" link if any."
+  (let ((first nil) (best nil))
+    (dotimes (i (supersonic-browse--stop-count))
+      (when (eql (supersonic-browse--prop i 'supersonic-browse-region) region)
+        (unless first (setq first i))
+        (when (and (not best) (not (eq (car-safe (supersonic-browse--prop i 'supersonic-browse-key)) 'more)))
+          (setq best i))))
+    (or best first)))
 
 (defun supersonic-browse-next-section ()
-  "Move to the first item of the next section."
+  "Focus the first item of the next region, from the last back to the first."
   (interactive)
-  (let ((heading (save-excursion
-                   (forward-line 1)
-                   (text-property-search-forward 'supersonic-browse-section t t))))
-    (when heading
-      (supersonic-browse--goto (supersonic-browse--next-focus (prop-match-end heading))))))
+  (let* ((n (supersonic-browse--stop-count))
+         (i (supersonic-browse--current-index))
+         (region (and (> n 0) (supersonic-browse--prop i 'supersonic-browse-region)))
+         (j i))
+    (while (and (< j n) (eql (supersonic-browse--prop j 'supersonic-browse-region) region))
+      (setq j (1+ j)))
+    (when (> n 0)
+      (supersonic-browse--goto-index
+       (supersonic-browse--region-first (supersonic-browse--prop (if (< j n) j 0) 'supersonic-browse-region))))))
 
 (defun supersonic-browse-previous-section ()
-  "Move to the first item of the previous section."
+  "Focus the first item of the previous region, from the first round to the last."
   (interactive)
-  (let ((here (point)))
-    (save-excursion
-      (forward-line -1)
-      (let ((heading (text-property-search-backward 'supersonic-browse-section t t)))
-        (when heading
-          (setq here (prop-match-beginning heading)))))
-    (when (< here (point))
-      (let ((heading (save-excursion (goto-char here)
-                                     (text-property-search-backward 'supersonic-browse-section t t))))
-        (supersonic-browse--goto (supersonic-browse--next-focus
-                                  (if heading (prop-match-end heading) (point-min))))))))
+  (let* ((n (supersonic-browse--stop-count))
+         (i (supersonic-browse--current-index))
+         (region (and (> n 0) (supersonic-browse--prop i 'supersonic-browse-region)))
+         (j i))
+    (while (and (>= j 0) (eql (supersonic-browse--prop j 'supersonic-browse-region) region))
+      (setq j (1- j)))
+    (when (> n 0)
+      (supersonic-browse--goto-index
+       (supersonic-browse--region-first (supersonic-browse--prop (if (>= j 0) j (1- n)) 'supersonic-browse-region))))))
 
 ;;;
 ;;; Visiting pages
@@ -1145,22 +1309,56 @@ TYPE is one of `supersonic-provider-album-list-types'."
     (define-key map (kbd "s") #'supersonic-browse-shuffle)
     (define-key map (kbd "a") #'supersonic-browse-enqueue)
     (define-key map (kbd "l") #'supersonic-browse-back)
+    (define-key map (kbd "DEL") #'supersonic-browse-back)
+    (define-key map (kbd "M-<left>") #'supersonic-browse-back)
+    (define-key map (kbd "M-<right>") #'supersonic-browse-forward)
     (define-key map (kbd "r") #'supersonic-browse-forward)
     (define-key map (kbd "h") #'supersonic-browse-home)
     (define-key map (kbd "A") #'supersonic-browse-artists)
     (define-key map (kbd "/") #'supersonic-browse-search)
     (define-key map (kbd "g") #'supersonic-browse-reload)
     (define-key map (kbd "?") #'describe-mode)
-    (define-key map (kbd "n") #'supersonic-browse-next)
-    (define-key map (kbd "p") #'supersonic-browse-previous)
+    (define-key map (kbd "n") #'supersonic-browse-down)
+    (define-key map (kbd "p") #'supersonic-browse-up)
+    (define-key map (kbd "f") #'supersonic-browse-next)
+    (define-key map (kbd "b") #'supersonic-browse-previous)
     (define-key map (kbd "<right>") #'supersonic-browse-next)
     (define-key map (kbd "<left>") #'supersonic-browse-previous)
     (define-key map (kbd "<down>") #'supersonic-browse-down)
     (define-key map (kbd "<up>") #'supersonic-browse-up)
     (define-key map (kbd "TAB") #'supersonic-browse-next-section)
     (define-key map (kbd "<backtab>") #'supersonic-browse-previous-section)
+    (define-key map (kbd "<home>") #'supersonic-browse-first)
+    (define-key map (kbd "<end>") #'supersonic-browse-last)
     (define-key map (kbd "<mouse-8>") #'supersonic-browse-back)
     (define-key map (kbd "<mouse-9>") #'supersonic-browse-forward)
+    ;; Whatever moves the cursor moves between items instead -- C-n,
+    ;; M-f, or a modal editing package's own motion commands.
+    (dolist (remap '((next-line . supersonic-browse-down)
+                     (previous-line . supersonic-browse-up)
+                     (forward-char . supersonic-browse-next)
+                     (backward-char . supersonic-browse-previous)
+                     (right-char . supersonic-browse-next)
+                     (left-char . supersonic-browse-previous)
+                     (forward-word . supersonic-browse-next)
+                     (backward-word . supersonic-browse-previous)
+                     (forward-paragraph . supersonic-browse-next-section)
+                     (backward-paragraph . supersonic-browse-previous-section)
+                     (beginning-of-buffer . supersonic-browse-first)
+                     (end-of-buffer . supersonic-browse-last)
+                     ;; xah-fly-keys
+                     (xah-beginning-of-line-or-block . supersonic-browse-previous-section)
+                     (xah-end-of-line-or-block . supersonic-browse-next-section)
+                     ;; evil and meow
+                     (evil-next-line . supersonic-browse-down)
+                     (evil-previous-line . supersonic-browse-up)
+                     (evil-forward-char . supersonic-browse-next)
+                     (evil-backward-char . supersonic-browse-previous)
+                     (meow-next . supersonic-browse-down)
+                     (meow-prev . supersonic-browse-up)
+                     (meow-right . supersonic-browse-next)
+                     (meow-left . supersonic-browse-previous)))
+      (define-key map (vector 'remap (car remap)) (cdr remap)))
     map)
   "Keymap for `supersonic-browse-mode'.")
 

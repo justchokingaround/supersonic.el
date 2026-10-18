@@ -8882,6 +8882,94 @@ album's artist and year, and on an artist's page an album's year and size."
             (should-error (progn (supersonic-browse-forward) (supersonic-browse-forward)) :type 'user-error)))
       (kill-buffer supersonic-browse-buffer-name))))
 
+(ert-deftest supersonic-tests-subsonic-image-size ()
+  "Image dimensions are read off PNG, JPEG and WebP headers."
+  (let ((png (concat "\x89PNG\r\n\x1a\n" (make-string 4 0) "IHDR"
+                     (unibyte-string 0 0 1 0 0 0 0 200)))
+        (jpeg (concat (unibyte-string #xff #xd8 #xff #xe0 0 4 0 0 #xff #xc0 0 17 8 1 44 1 144) (make-string 16 0)))
+        (webp (concat "RIFF" (make-string 4 0) "WEBPVP8X" (make-string 8 0)
+                      (unibyte-string #xff 3 0 #xff 3 0) (make-string 8 0))))
+    (should (equal '(256 . 200) (supersonic-subsonic--image-size png)))
+    (should (equal '(400 . 300) (supersonic-subsonic--image-size jpeg)))
+    (should (equal '(1024 . 1024) (supersonic-subsonic--image-size webp)))
+    (should-not (supersonic-subsonic--image-size "garbage"))))
+
+(ert-deftest supersonic-tests-subsonic-rejects-unscaled-placeholders ()
+  "Art far bigger than asked for is a placeholder, once the server has
+been seen to scale art; before that, it is trusted."
+  (let ((supersonic-subsonic--server-scales nil)
+        (big (concat "RIFF" (make-string 4 0) "WEBPVP8X" (make-string 8 0)
+                     (unibyte-string #xff 3 0 #xff 3 0) (make-string 8 0)))
+        (scaled (concat "\x89PNG\r\n\x1a\n" (make-string 4 0) "IHDR" (unibyte-string 0 0 1 80 0 0 1 80))))
+    (should-not (supersonic-subsonic--placeholder-p big 336))
+    (should-not (supersonic-subsonic--placeholder-p scaled 336))
+    (should supersonic-subsonic--server-scales)
+    (should (supersonic-subsonic--placeholder-p big 336))))
+
+(defmacro supersonic-tests--with-browse-stops (layout &rest body)
+  "Run BODY in a browser buffer whose items are LAYOUT.
+LAYOUT is a list of (KEY REGION GRID ROW COL SAME-LINE), one
+focusable character each, on a line of its own unless SAME-LINE."
+  (declare (indent 1))
+  `(with-temp-buffer
+     (require 'supersonic-browse)
+     (supersonic-browse-mode)
+     (let ((inhibit-read-only t))
+       (dolist (stop ,layout)
+         (pcase-let ((`(,key ,region ,grid ,row ,col ,same-line) stop))
+           (when (and (not same-line) (> (point) (point-min)))
+             (insert "\n"))
+           (insert (propertize "*" 'supersonic-browse-focus t 'supersonic-browse-key key
+                               'supersonic-browse-region region 'supersonic-browse-grid grid
+                               'supersonic-browse-row row 'supersonic-browse-col col)
+                   " "))))
+     (supersonic-browse--index-stops)
+     (cl-letf (((symbol-function 'supersonic-browse--paint) #'ignore))
+       ,@body)))
+
+(defun supersonic-tests--browse-at ()
+  "Return the key of the item at point."
+  (get-text-property (point) 'supersonic-browse-key))
+
+(ert-deftest supersonic-tests-browse-moves-in-grids-and-regions ()
+  "Up and down keep the column across grid rows and step into and out of
+grids; TAB goes region by region, round from the last to the first."
+  (supersonic-tests--with-browse-stops
+      ;; Region 1: two buttons on one line.  Region 2: a 3-wide grid with 5 tiles.
+      ;; Region 3: two tracks.
+      '(((b 1) 1 nil nil nil) ((b 2) 1 nil nil nil same-line)
+        ((t 1) 2 1 0 0) ((t 2) 2 1 0 1) ((t 3) 2 1 0 2)
+        ((t 4) 2 1 1 0) ((t 5) 2 1 1 1)
+        ((r 1) 3 nil nil nil) ((r 2) 3 nil nil nil))
+    (supersonic-browse-first)
+    (should (equal '(b 1) (supersonic-tests--browse-at)))
+    (supersonic-browse-down)            ; off the line of buttons, not along it
+    (should (equal '(t 1) (supersonic-tests--browse-at)))
+    (supersonic-browse-next) (supersonic-browse-next)
+    (should (equal '(t 3) (supersonic-tests--browse-at)))
+    (supersonic-browse-down)            ; no tile below column 2: the nearest before
+    (should (equal '(t 5) (supersonic-tests--browse-at)))
+    (supersonic-browse-down)            ; out of the grid
+    (should (equal '(r 1) (supersonic-tests--browse-at)))
+    (supersonic-browse-up)              ; back in, to the tile left from
+    (should (equal '(t 5) (supersonic-tests--browse-at)))
+    (supersonic-browse-up)              ; same column, a row up
+    (should (equal '(t 2) (supersonic-tests--browse-at)))
+    (supersonic-browse-next-section)
+    (should (equal '(r 1) (supersonic-tests--browse-at)))
+    (supersonic-browse-next-section)    ; round to the first
+    (should (equal '(b 1) (supersonic-tests--browse-at)))
+    (supersonic-browse-previous-section)
+    (should (equal '(r 1) (supersonic-tests--browse-at)))))
+
+(ert-deftest supersonic-tests-browse-numbering ()
+  "Track numbers are shown when sound, positions otherwise."
+  (require 'supersonic-browse)
+  (should (equal '(1 2 1 2) (supersonic-browse--numbering
+                             '((:track 1 :disc 1) (:track 2 :disc 1) (:track 1 :disc 2) (:track 2 :disc 2)))))
+  (should (equal '(1 2 3) (supersonic-browse--numbering '((:track 1) (:track 1) (:track 2)))))
+  (should (equal '(1 2) (supersonic-browse--numbering '((:track 5) (:title "no number"))))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here
