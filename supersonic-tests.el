@@ -8970,6 +8970,26 @@ grids; TAB goes region by region, round from the last to the first."
   (should (equal '(1 2 3) (supersonic-browse--numbering '((:track 1) (:track 1) (:track 2)))))
   (should (equal '(1 2) (supersonic-browse--numbering '((:track 5) (:title "no number"))))))
 
+(ert-deftest supersonic-tests-browse-buttons-and-links-act ()
+  "RET on a button or a \"See all\" link runs what it stands for."
+  (require 'supersonic-browse)
+  (let ((ran nil))
+    (with-temp-buffer
+      (supersonic-browse-mode)
+      (let ((inhibit-read-only t))
+        (insert (propertize "Surprise" 'supersonic-browse-focus t 'supersonic-browse-key '(button surprise)
+                            'supersonic-browse-item (list :action (lambda () (push 'surprise ran)))))
+        (insert "  ")
+        (insert (propertize "See all" 'supersonic-browse-focus t 'supersonic-browse-key '(more "See all" 2)
+                            'supersonic-browse-item (list :action (lambda () (push 'more ran))))))
+      (supersonic-browse--index-stops)
+      (cl-letf (((symbol-function 'supersonic-browse--paint) #'ignore))
+        (supersonic-browse-first)
+        (supersonic-browse-open)
+        (supersonic-browse-next)
+        (supersonic-browse-open)))
+    (should (equal '(more surprise) ran))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here

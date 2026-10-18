@@ -117,16 +117,18 @@
     (if (stringp family) family "sans-serif")))
 
 (defun supersonic-browse--window ()
-  "Return the window showing the browser, else the selected one."
-  (or (get-buffer-window (current-buffer)) (selected-window)))
+  "Return the window showing the browser, on any frame, else the selected one."
+  (or (get-buffer-window (current-buffer)) (get-buffer-window (current-buffer) t) (selected-window)))
 
 (defun supersonic-browse--available-width ()
   "Return the pixels a page can use between its margins."
   (- (window-body-width (supersonic-browse--window) t) (* 2 supersonic-browse-margin)))
 
 (defun supersonic-browse--graphic-p ()
-  "Return non-nil if tiles can be drawn as images."
-  (and (display-graphic-p) (image-type-available-p 'svg)))
+  "Return non-nil if tiles can be drawn as images where the browser is shown.
+Asks the frame showing it, not the selected one: a redraw from a timer
+may run while a daemon's terminal frame is selected."
+  (and (display-graphic-p (window-frame (supersonic-browse--window))) (image-type-available-p 'svg)))
 
 (defun supersonic-browse--hue (string)
   "Return a hue between 0 and 1 picked by STRING, the same every time."
@@ -170,7 +172,7 @@
 (defun supersonic-browse--art-file (item size)
   "Return ITEM's cover art cached at SIZE, or nil if it is not cached."
   (let ((art (plist-get item :art)))
-    (and art (supersonic-art-available-p)
+    (and art supersonic-enable-art
          (let ((file (supersonic-art-cache-file art size)))
            (and (file-exists-p file) file)))))
 
@@ -218,21 +220,34 @@ At X and Y, 0 by default.  FILE is resolved against the image's
                        (supersonic-browse--initials (or (plist-get item :name) (plist-get item :title)))))))))
 
 (defun supersonic-browse--tile-image (item shape selected)
-  "Return the display spec of ITEM's tile, a SHAPE, ringed if SELECTED."
+  "Return the display spec of ITEM's tile, a SHAPE, lifted out if SELECTED.
+A tile not in focus draws its art slightly inset; the one in focus
+fills the tile, ringed in the accent colour, with a play badge."
   (let* ((size supersonic-browse-tile-size)
          (file (supersonic-browse--art-file item (* 2 size)))
          (cache-key (list (plist-get item :id) shape selected file size))
          (cached (and supersonic-browse--images (gethash cache-key supersonic-browse--images))))
     (or cached
-        (let ((svg (svg-create size size)))
-          (supersonic-browse--art-svg svg item size shape file)
-          (dom-append-child
-           svg (supersonic-browse--shape-node
-                shape size (if selected 2.5 0.5)
-                '(fill . "none")
-                `(stroke . ,(if selected (supersonic-browse--accent) (supersonic-browse--fg)))
-                `(stroke-opacity . ,(if selected "1" "0.12"))
-                `(stroke-width . ,(if selected 5 1))))
+        (let* ((svg (svg-create size size))
+               (inset (if selected 0 (round (* size 0.045))))
+               (inner (- size (* 2 inset)))
+               (accent (supersonic-browse--accent)))
+          (supersonic-browse--art-svg svg item inner shape file inset inset)
+          (if selected
+              (progn
+                (dom-append-child svg (supersonic-browse--shape-node
+                                       shape size 3 '(fill . "none") `(stroke . ,accent) '(stroke-width . 6)))
+                (let ((r (round (* size 0.12)))
+                      (c (- size (round (* size 0.17)))))
+                  (dom-append-child svg (dom-node 'circle `((cx . ,c) (cy . ,c) (r . ,(+ r 3)) (fill . ,(supersonic-browse--bg))
+                                                            (fill-opacity . "0.5"))))
+                  (dom-append-child svg (dom-node 'circle `((cx . ,c) (cy . ,c) (r . ,r) (fill . ,accent))))
+                  (dom-append-child svg (supersonic-browse--icon 'play (+ c 1) c (supersonic-browse--bg)))))
+            (let ((outline (supersonic-browse--shape-node shape inner 0.5 '(fill . "none")
+                                                          `(stroke . ,(supersonic-browse--fg))
+                                                          '(stroke-opacity . "0.12") '(stroke-width . 1))))
+              (dom-set-attribute outline 'transform (format "translate(%s,%s)" inset inset))
+              (dom-append-child svg outline)))
           (let ((image (apply #'svg-image svg :ascent 100 :scale 1 (and file (list :base-uri file)))))
             (unless supersonic-browse--images
               (setq supersonic-browse--images (make-hash-table :test #'equal)))
@@ -714,7 +729,17 @@ through the image's map."
            (supersonic-browse--insert-tracks (seq-take (plist-get results :tracks) 20) t)))))))
 
 (defun supersonic-browse--render ()
-  "Lay the current page out anew for the window's width."
+  "Lay the current page out anew for the width of the window showing it.
+Run in that window, whatever is selected: layout measures text as that
+window's frame draws it, and loads finish in process callbacks."
+  (let ((window (get-buffer-window (current-buffer) t)))
+    (if (and window (not (eq window (selected-window))))
+        (with-selected-window window
+          (supersonic-browse--render-here))
+      (supersonic-browse--render-here))))
+
+(defun supersonic-browse--render-here ()
+  "Lay the current page out anew, in the selected window."
   (let ((inhibit-read-only t)
         (selected supersonic-browse--selected)
         (start (window-start (supersonic-browse--window))))
@@ -797,6 +822,14 @@ through the image's map."
 
 (defun supersonic-browse--redraw-images ()
   "Redraw every image on the page whose art may have arrived."
+  (let ((window (get-buffer-window (current-buffer) t)))
+    (if (and window (not (eq window (selected-window))))
+        (with-selected-window window
+          (supersonic-browse--redraw-images-here))
+      (supersonic-browse--redraw-images-here))))
+
+(defun supersonic-browse--redraw-images-here ()
+  "Redraw the images whose art may have arrived, in the selected window."
   (let ((inhibit-read-only t)
         (pos (point-min)))
     (while (setq pos (next-single-property-change pos 'supersonic-browse-item))
@@ -899,9 +932,18 @@ through the image's map."
           (overlay-put supersonic-browse--title-overlay 'face '(:inherit (supersonic-browse-accent bold)))
           (setq supersonic-browse--bar-overlay (make-overlay 1 1))
           (setq supersonic-browse--focus-overlay (make-overlay 1 1)))
-        (if (and shape title)
-            (move-overlay supersonic-browse--title-overlay (car title) (cdr title))
-          (delete-overlay supersonic-browse--title-overlay))
+        (cond
+         ((and shape title)
+          (overlay-put supersonic-browse--title-overlay 'face '(:inherit (supersonic-browse-accent bold)))
+          (move-overlay supersonic-browse--title-overlay (car title) (cdr title)))
+         ((memq (car-safe key) '(button more))
+          ;; A button or link lights up as a whole.
+          (overlay-put supersonic-browse--title-overlay 'face
+                       `(:background ,(supersonic-browse--accent) :foreground ,(supersonic-browse--bg)
+                                     :box (:line-width (14 . 7) :color ,(supersonic-browse--accent))))
+          (move-overlay supersonic-browse--title-overlay pos
+                        (or (next-single-property-change pos 'supersonic-browse-key) (point-max))))
+         (t (delete-overlay supersonic-browse--title-overlay)))
         (if (eq (car-safe key) 'track)
             (let ((start (save-excursion (goto-char pos) (line-beginning-position)))
                   (end (save-excursion (goto-char pos) (1+ (line-end-position))))
