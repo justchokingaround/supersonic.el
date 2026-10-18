@@ -643,7 +643,9 @@ The image's width stands for the whole track."
   (let* ((posn (event-start event))
          (image (posn-image posn))
          (x (car (posn-object-x-y posn))))
-    (when (and image x)
+    ;; `image-size' is only defined in an Emacs with image support,
+    ;; which any click on an image comes from.
+    (when (and image x (fboundp 'image-size))
       (let* ((width (car (image-size image t)))
              (ratio (max 0.0 (min 1.0 (/ (float x) width)))))
         (supersonic-playback-seek-fraction ratio)))))

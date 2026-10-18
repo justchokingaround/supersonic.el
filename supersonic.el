@@ -589,8 +589,9 @@ Set whether or not it succeeded, so that a failed one is not retried,
 while one skipped for a hidden buffer is still made once it shows.")
 
 (defvar-local supersonic-now-playing--stale-images nil
-  "Alist of FIELD to the image `supersonic-now-playing--update-field' replaced last.
-Each is flushed on FIELD's next update, not when replaced.")
+  "Alist of FIELD to the image last replaced in FIELD.
+`supersonic-now-playing--update-field' flushes each on FIELD's next
+update, not when replacing it.")
 
 (defun supersonic-now-playing-buffer ()
   "Return the now-playing buffer if it is currently live, else nil."
