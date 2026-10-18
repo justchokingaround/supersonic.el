@@ -34,10 +34,10 @@
 ;; Callers pass it back as-is, compare it with `equal', and never build
 ;; or parse one.  Every item is a plist in this vocabulary:
 ;;
-;;   artist  :id :name :art
-;;   album   :id :name :artist :year :art
+;;   artist  :id :name :art :album-count
+;;   album   :id :name :artist :year :art :artist-id :song-count :duration
 ;;   track   :id :title :artist :album :duration :track :art
-;;           :suffix :content-type :size
+;;           :suffix :content-type :size :year :disc :album-id :artist-id
 ;;   podcast :id :title :art
 ;;   episode :id :title :duration :status
 ;;
@@ -76,7 +76,8 @@ promise.
 - `artist-albums' takes an artist id and resolves to that artist's
   albums.
 - `album-list' takes a TYPE, one of `recent' (recently played),
-  `random' or `newest' (recently added), and a COUNT, and resolves to
+  `random', `newest' (recently added), `frequent' (most played) or
+  `starred' (favourites), and a COUNT, and resolves to
   at most COUNT albums across all artists.  A provider that cannot
   produce a given TYPE signals a `user-error' saying so.
 - `album-tracks' takes an album id and resolves to its tracks, in
@@ -132,7 +133,7 @@ Items are plists in the vocabulary described in the Commentary of
 `supersonic-provider.el'.  A provider may leave operations out;
 calling one then reports that.")
 
-(defconst supersonic-provider-album-list-types '(recent random newest)
+(defconst supersonic-provider-album-list-types '(recent random newest frequent starred)
   "The album list types `supersonic-provider-album-list' may be asked for.")
 
 (defvar supersonic-provider--providers (make-hash-table :test #'eq)

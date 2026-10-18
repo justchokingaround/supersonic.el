@@ -64,12 +64,14 @@ DATA's \"id\" as a string."
 
 (defun supersonic-subsonic--artist (data)
   "Turn a Subsonic artist alist DATA into a facade artist plist."
-  (supersonic-subsonic--plist data '((:name . "name") (:art . "coverArt"))))
+  (supersonic-subsonic--plist data '((:name . "name") (:art . "coverArt") (:album-count . "albumCount"))))
 
 (defun supersonic-subsonic--album (data)
   "Turn a Subsonic album alist DATA into a facade album plist."
   (supersonic-subsonic--plist
-   data '((:name . "name") (:artist . "artist") (:year . "year") (:art . "coverArt"))))
+   data '((:name . "name") (:artist . "artist") (:year . "year") (:art . "coverArt")
+          (:artist-id . "artistId") (:song-count . "songCount") (:duration . "duration")
+          (:genre . "genre"))))
 
 (defun supersonic-subsonic--track (data)
   "Turn a Subsonic song/child alist DATA into a facade track plist.
@@ -86,7 +88,11 @@ as `:genre', for a now-playing row of the user's own to read."
      (:suffix . "suffix")
      (:content-type . "contentType")
      (:size . "size")
-     (:genre . "genre"))))
+     (:genre . "genre")
+     (:year . "year")
+     (:disc . "discNumber")
+     (:album-id . "albumId")
+     (:artist-id . "artistId"))))
 
 (defun supersonic-subsonic--podcast (data)
   "Turn a Subsonic podcast channel alist DATA into a facade podcast plist."

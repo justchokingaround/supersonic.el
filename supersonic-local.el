@@ -188,6 +188,7 @@ ATTRIBUTES are FILE's `file-attributes'."
 (defvar supersonic-local--artists nil "Hash table of artist id to artist plist.")
 (defvar supersonic-local--scan nil "Promise of the scan running, or nil.")
 (defvar supersonic-local--history nil "Album ids played, most recent first.")
+(defvar supersonic-local--counts nil "Hash table of album id to times played.")
 
 (defconst supersonic-local--index-version 1
   "Version of the index cache file's format; a different one is rescanned.")
@@ -199,6 +200,17 @@ ATTRIBUTES are FILE's `file-attributes'."
 (defun supersonic-local--history-file ()
   "Return the file the local play history is kept in."
   (expand-file-name "local-history.eld" supersonic-cache-path))
+
+(defun supersonic-local--counts-file ()
+  "Return the file the local play counts are kept in."
+  (expand-file-name "local-counts.eld" supersonic-cache-path))
+
+(defun supersonic-local--load-counts ()
+  "Load the play counts, an alist on disk, into `supersonic-local--counts'."
+  (let ((table (make-hash-table :test #'equal)))
+    (dolist (pair (supersonic-local--read-file (supersonic-local--counts-file)))
+      (puthash (car pair) (cdr pair) table))
+    (setq supersonic-local--counts table)))
 
 (defun supersonic-local--read-file (file)
   "Return the Lisp object in FILE, or nil if it cannot be read."
@@ -271,12 +283,17 @@ Case is ignored, so that \"MIKA\" and \"Mika\" tags make one album."
                                                  "(no album)")))
          (setq album (plist-put album :artist (supersonic-local--most-common
                                                (mapcar (lambda (track) (plist-get track :album-artist)) tracks))))
+         (setq album (plist-put album :song-count (length tracks)))
+         (setq album (plist-put album :duration (apply #'+ (mapcar (lambda (track) (or (plist-get track :duration) 0))
+                                                                    tracks))))
+         (setq album (plist-put album :artist-id (supersonic-local--artist-key (plist-get album :artist))))
          (puthash id album albums))
        (let* ((name (plist-get album :artist))
               (artist-id (supersonic-local--artist-key name))
               (artist (or (gethash artist-id artists)
                           (list :id artist-id :name (or name "(unknown artist)") :art nil :albums nil))))
          (setq artist (plist-put artist :albums (cons id (plist-get artist :albums))))
+         (setq artist (plist-put artist :album-count (length (plist-get artist :albums))))
          (setq artist (plist-put artist :spellings
                                  (append (mapcar (lambda (track) (plist-get track :album-artist))
                                                  (plist-get album :tracks))
@@ -416,10 +433,15 @@ once per session."
 ;;;
 
 (defun supersonic-local--public (item)
-  "Return ITEM, a track, album or artist plist, without the index's own keys."
-  (cl-loop for (key value) on item by #'cddr
-           unless (memq key '(:tracks :albums :spellings :lyrics-tag :mtime))
-           append (list key value)))
+  "Return ITEM, a track, album or artist plist, without the index's own keys.
+A track gets the ids of its album and album artist added."
+  (let ((public (cl-loop for (key value) on item by #'cddr
+                         unless (memq key '(:tracks :albums :spellings :lyrics-tag :mtime))
+                         append (list key value))))
+    (if (and (plist-get item :title) (string-prefix-p "/" (or (plist-get item :id) "")))
+        (append public (list :album-id (supersonic-local--album-key item)
+                             :artist-id (supersonic-local--artist-key (plist-get item :album-artist))))
+      public)))
 
 (defun supersonic-local--name< (a b)
   "Return non-nil if plist A's name sorts before B's, ignoring case."
@@ -455,7 +477,17 @@ once per session."
                        do (cl-rotatef (aref vector i) (aref vector (random (1+ i)))))
               (append vector nil)))
            ('recent (delq nil (mapcar (lambda (id) (gethash id supersonic-local--albums))
-                                      supersonic-local--history))))))
+                                      supersonic-local--history)))
+           ('frequent
+            (unless supersonic-local--counts
+              (supersonic-local--load-counts))
+            (let (played)
+              (maphash (lambda (id count)
+                         (let ((album (gethash id supersonic-local--albums)))
+                           (when album (push (cons count album) played))))
+                       supersonic-local--counts)
+              (mapcar #'cdr (sort played (lambda (a b) (> (car a) (car b)))))))
+           (_ (user-error "The local files have no `%s' album list" type)))))
    (mapcar #'supersonic-local--public (seq-take albums count))))
 
 (aio-defun
@@ -519,7 +551,13 @@ NOW-PLAYING is non-nil when it has just started; that is when it counts."
         (let ((album (supersonic-local--album-key track)))
           (setq supersonic-local--history
                 (seq-take (cons album (delete album supersonic-local--history)) 100))
-          (supersonic-local--write-file (supersonic-local--history-file) supersonic-local--history))))))
+          (supersonic-local--write-file (supersonic-local--history-file) supersonic-local--history)
+          (unless supersonic-local--counts
+            (supersonic-local--load-counts))
+          (puthash album (1+ (gethash album supersonic-local--counts 0)) supersonic-local--counts)
+          (let (pairs)
+            (maphash (lambda (key count) (push (cons key count) pairs)) supersonic-local--counts)
+            (supersonic-local--write-file (supersonic-local--counts-file) pairs)))))))
 
 (defun supersonic-local--embedded-art (file)
   "Return a promise resolving to the bytes of the art embedded in FILE."

@@ -4321,7 +4321,7 @@ while reporting another failure, and neither may raise its own."
 (ert-deftest supersonic-tests-provider-album-list-rejects-unknown-types ()
   "`supersonic-provider-album-list' only passes on the types it documents."
   (supersonic-tests--with-provider supersonic-tests--fake-library
-    (should-error (aio-wait-for (supersonic-provider-album-list 'starred 10)))
+    (should-error (aio-wait-for (supersonic-provider-album-list 'alphabetical-by-mood 10)))
     (should (equal "newest-10" (plist-get (car (aio-wait-for (supersonic-provider-album-list 'newest 10))) :id)))))
 
 (ert-deftest supersonic-tests-subsonic-is-the-default-provider ()
