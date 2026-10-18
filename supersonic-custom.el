@@ -28,8 +28,7 @@
 ;; The exception is an option whose default is a function of the
 ;; package, such as `supersonic-auth-function': it lives next to that
 ;; function, so that this file does not refer back to the files
-;; requiring it.  `supersonic-credentials-cache-expiry' lives with
-;; `supersonic-cached', see `supersonic-credentials.el'.
+;; requiring it.
 
 ;;; Code:
 
@@ -46,6 +45,14 @@ credentials some other way.  May be given without a scheme
 \(\"http://\" or \"https://\"), in which case \"https://\" is
 assumed."
   :type 'string
+  :group 'supersonic)
+
+(defcustom supersonic-credentials-cache-expiry 3600
+  "Seconds a function made by `supersonic-cached' keeps what it found.
+Read when something is kept, so a change applies to what is kept from
+then on, not to what already is.  `supersonic-forget-credentials'
+drops everything kept before it expires."
+  :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-mpv (executable-find "mpv")
