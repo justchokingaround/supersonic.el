@@ -323,10 +323,17 @@ e.g. a cache file that could not be deleted."
   (let ((inhibit-message t))
     (apply #'message (concat "[Supersonic] " format-string) args)))
 
+(defvar supersonic-async-error-functions nil
+  "Functions called with DESCRIPTION and ERR whenever a refresh failed.
+DESCRIPTION is as for `supersonic--report-async-error'.  For reacting to
+a failure, e.g. offering another provider when the server is down.")
+
 (defun supersonic--report-async-error (description err)
   "Tell the user that DESCRIPTION failed with ERR via the echo area.
-DESCRIPTION is a short present-tense phrase, e.g. \"fetch tracks\"."
-  (message "[Supersonic] Failed to %s: %s" description (error-message-string err)))
+DESCRIPTION is a short present-tense phrase, e.g. \"fetch tracks\".
+Then runs `supersonic-async-error-functions'."
+  (message "[Supersonic] Failed to %s: %s" description (error-message-string err))
+  (run-hook-with-args 'supersonic-async-error-functions description err))
 
 (defun supersonic--handle-async-error (buffer description err)
   "Report that DESCRIPTION failed with ERR, both in BUFFER and the echo area.

@@ -1,0 +1,653 @@
+;;; supersonic-local.el --- Local music files provider for supersonic.el -*- lexical-binding: t; -*-
+
+;; Author: justchokingaround
+;; Assisted-by: Claude:claude-opus-5-5
+;; URL: https://github.com/systemfreund/supersonic.el
+;; Keywords: multimedia
+
+;; This program is free software: you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; This program is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+;;; Commentary:
+
+;; The `local' library provider: the music files under
+;; `supersonic-local-directories', browsed and played with no server,
+;; e.g. while it is unreachable.  Played through mpv, which plays the
+;; files directly.
+;;
+;; Tags are read with ffprobe, once per file: the index is cached in
+;; `supersonic-cache-path' and a rescan only probes files that are new
+;; or changed.  Missing tags are guessed from an Artist/Album/Track
+;; directory layout.  Cover art is a cover.jpg-like file next to the
+;; tracks, or else the art embedded in them; lyrics are an .lrc file
+;; next to the track, or else its lyrics tag.  The `recent' album list
+;; is what was played from this library.
+;;
+;; `supersonic-local-toggle' switches between this provider and the one
+;; active before.  With `supersonic-local-offer-fallback', a request to
+;; the server failing for want of a connection offers that switch.
+;;
+;; Ids are file names for tracks, and strings of their own for albums
+;; and artists; like every provider's ids, nothing else reads them.
+
+;;; Code:
+
+(require 'aio)
+(require 'cl-lib)
+(require 'seq)
+(require 'subr-x)
+
+(require 'supersonic-custom)
+(require 'supersonic-provider)
+(require 'supersonic-playback)
+
+(declare-function supersonic-provider-switch "supersonic")
+(declare-function supersonic-lyrics-parse-lrc "supersonic-lyrics")
+
+;;;
+;;; Reading tags
+;;;
+
+(defun supersonic-local--normalize-key (key)
+  "Return tag KEY lowercased with all but letters and digits dropped.
+Tag names vary with the format and the tagger: \"Album Artist\",
+\"album_artist\" and \"ALBUMARTIST\" all become \"albumartist\"."
+  (replace-regexp-in-string "[^[:alnum:]]" "" (downcase (if (symbolp key) (symbol-name key) key))))
+
+(defun supersonic-local--tags (probe)
+  "Return the tags in PROBE, ffprobe's parsed JSON, as an alist of strings.
+Keys are normalized by `supersonic-local--normalize-key'.  The
+container's tags win over the audio stream's, which some formats, such
+as Ogg, keep theirs in."
+  (let ((tags nil))
+    (dolist (source (cons (alist-get 'tags (alist-get 'format probe))
+                          (mapcar (lambda (stream) (alist-get 'tags stream))
+                                  (seq-filter (lambda (stream) (equal (alist-get 'codec_type stream) "audio"))
+                                              (alist-get 'streams probe)))))
+      (dolist (pair source)
+        (let ((key (supersonic-local--normalize-key (car pair))))
+          (when (and (stringp (cdr pair)) (not (assoc key tags)))
+            (push (cons key (cdr pair)) tags)))))
+    (nreverse tags)))
+
+(defun supersonic-local--number (string)
+  "Return the leading number of STRING, such as 7 for \"7/10\", or nil."
+  (and string (string-match "\\`[[:space:]]*\\([0-9]+\\)" string)
+       (string-to-number (match-string 1 string))))
+
+(defun supersonic-local--guess (file root)
+  "Guess the artist, album, track number and title of FILE from its name.
+ROOT is the library directory FILE is under; an Artist/Album/Track
+layout below it is assumed.  Returns a plist of what could be guessed."
+  (let* ((parts (split-string (file-relative-name file root) "/" t))
+         (base (file-name-sans-extension (car (last parts))))
+         (number (and (string-match "\\`\\([0-9]+\\)[[:space:]]*[-.][[:space:]]*" base)
+                      (string-to-number (match-string 1 base))))
+         (title (if number (substring base (match-end 0)) base))
+         (clean (lambda (dir) (string-trim (replace-regexp-in-string "([0-9]\\{4\\})" "" dir)))))
+    (list :title title
+          :track number
+          :artist (and (>= (length parts) 2) (car parts))
+          :album (and (>= (length parts) 3) (funcall clean (car (last parts 2)))))))
+
+(defun supersonic-local--folder-art (directory)
+  "Return the cover art image file in DIRECTORY, or nil."
+  (let ((case-fold-search t))
+    (and (file-directory-p directory)
+         (car (directory-files directory t "\\`\\(cover\\|folder\\|front\\|album\\)\\.\\(jpe?g\\|png\\|webp\\)\\'")))))
+
+(defun supersonic-local--track (file root probe attributes)
+  "Return the track plist of FILE under ROOT, from PROBE and ATTRIBUTES.
+PROBE is ffprobe's parsed JSON for FILE, nil if it could not be read;
+ATTRIBUTES are FILE's `file-attributes'."
+  (let* ((tags (supersonic-local--tags probe))
+         (tag (lambda (&rest keys)
+                (seq-some (lambda (key)
+                            (let ((value (cdr (assoc key tags))))
+                              (and value (not (string-empty-p (string-trim value))) (string-trim value))))
+                          keys)))
+         (guess (supersonic-local--guess file root))
+         (duration (let ((d (alist-get 'duration (alist-get 'format probe))))
+                     (and d (round (string-to-number d)))))
+         (embedded (seq-some (lambda (stream)
+                               (eql 1 (alist-get 'attached_pic (alist-get 'disposition stream))))
+                             (alist-get 'streams probe)))
+         (folder-art (supersonic-local--folder-art (file-name-directory file)))
+         (artist (or (funcall tag "artist") (plist-get guess :artist)))
+         (year (supersonic-local--number (funcall tag "date" "year" "originaldate"))))
+    (list :id file
+          :title (or (funcall tag "title") (plist-get guess :title))
+          :artist artist
+          :album-artist (or (funcall tag "albumartist") (plist-get guess :artist) artist)
+          :album (or (funcall tag "album") (plist-get guess :album))
+          :duration duration
+          :track (or (supersonic-local--number (funcall tag "track" "tracknumber")) (plist-get guess :track))
+          :disc (supersonic-local--number (funcall tag "disc" "discnumber"))
+          :year year
+          :genre (funcall tag "genre")
+          :art (cond (folder-art (concat "file:" folder-art))
+                     (embedded (concat "embedded:" file)))
+          :suffix (downcase (or (file-name-extension file) ""))
+          :size (file-attribute-size attributes)
+          :mtime (float-time (file-attribute-modification-time attributes))
+          :lyrics-tag (seq-some (lambda (pair)
+                                  (and (string-match-p "lyrics" (car pair))
+                                       (not (string-empty-p (string-trim (cdr pair))))
+                                       (cdr pair)))
+                                tags))))
+
+(defun supersonic-local--probe (file)
+  "Return a promise resolving to ffprobe's parsed JSON for FILE, or nil."
+  (let ((promise (aio-promise))
+        (buffer (generate-new-buffer " *supersonic-ffprobe*")))
+    (condition-case err
+        (make-process
+         :name "supersonic-ffprobe"
+         :buffer buffer
+         :command (list supersonic-local-ffprobe "-v" "quiet" "-print_format" "json"
+                        "-show_format" "-show_streams" file)
+         :coding 'utf-8
+         :connection-type 'pipe
+         :noquery t
+         :stderr nil
+         :sentinel
+         (lambda (process _event)
+           (unless (process-live-p process)
+             (let ((json (and (eq (process-status process) 'exit)
+                              (zerop (process-exit-status process))
+                              (with-current-buffer buffer
+                                (goto-char (point-min))
+                                (condition-case nil
+                                    (json-parse-buffer :object-type 'alist :array-type 'list
+                                                       :null-object nil :false-object nil)
+                                  (error nil))))))
+               (kill-buffer buffer)
+               (aio-resolve promise (lambda () json))))))
+      (error
+       (kill-buffer buffer)
+       (aio-resolve promise (lambda () (signal (car err) (cdr err))))))
+    promise))
+
+;;;
+;;; The index
+;;;
+
+(defvar supersonic-local--tracks nil
+  "Hash table of file name to track plist, nil until the index is loaded.")
+(defvar supersonic-local--albums nil "Hash table of album id to album plist.")
+(defvar supersonic-local--artists nil "Hash table of artist id to artist plist.")
+(defvar supersonic-local--scan nil "Promise of the scan running, or nil.")
+(defvar supersonic-local--history nil "Album ids played, most recent first.")
+
+(defconst supersonic-local--index-version 1
+  "Version of the index cache file's format; a different one is rescanned.")
+
+(defun supersonic-local--index-file ()
+  "Return the file the local index is cached in."
+  (expand-file-name "local-index.eld" supersonic-cache-path))
+
+(defun supersonic-local--history-file ()
+  "Return the file the local play history is kept in."
+  (expand-file-name "local-history.eld" supersonic-cache-path))
+
+(defun supersonic-local--read-file (file)
+  "Return the Lisp object in FILE, or nil if it cannot be read."
+  (when (file-readable-p file)
+    (condition-case nil
+        (with-temp-buffer
+          (insert-file-contents file)
+          (read (current-buffer)))
+      (error nil))))
+
+(defun supersonic-local--write-file (file object)
+  "Write OBJECT to FILE, logging rather than signalling a failure."
+  (condition-case err
+      (progn
+        (make-directory (file-name-directory file) t)
+        (with-temp-file file
+          (let ((print-length nil)
+                (print-level nil)
+                (coding-system-for-write 'utf-8))
+            (insert ";; -*- coding: utf-8 -*-\n")
+            (prin1 object (current-buffer)))))
+    (error (supersonic--log "could not write %s: %s" file (error-message-string err)))))
+
+(defun supersonic-local--album-key (track)
+  "Return the id of TRACK's album.
+Case is ignored, so that \"MIKA\" and \"Mika\" tags make one album."
+  (downcase (concat "album:" (or (plist-get track :album-artist) "") "\x1f" (or (plist-get track :album) ""))))
+
+(defun supersonic-local--artist-key (name)
+  "Return the id of the artist called NAME, ignoring case."
+  (downcase (concat "artist:" (or name ""))))
+
+(defun supersonic-local--most-common (strings)
+  "Return the string occurring most often in STRINGS, the first on a tie."
+  (let ((counts nil))
+    (dolist (string strings)
+      (when string
+        (cl-incf (alist-get string counts 0 nil #'equal))))
+    (car (seq-reduce (lambda (best pair) (if (> (cdr pair) (cdr best)) pair best))
+                     (nreverse counts) (cons nil 0)))))
+
+(defun supersonic-local--rebuild ()
+  "Rebuild the album and artist tables from the track index."
+  (let ((albums (make-hash-table :test #'equal))
+        (artists (make-hash-table :test #'equal)))
+    (maphash
+     (lambda (_file track)
+       (let* ((id (supersonic-local--album-key track))
+              (album (or (gethash id albums)
+                         (puthash id (list :id id
+                                           :name (or (plist-get track :album) "(no album)")
+                                           :artist (plist-get track :album-artist)
+                                           :year (plist-get track :year)
+                                           :art (plist-get track :art)
+                                           :mtime 0
+                                           :tracks nil)
+                                  albums))))
+         (setq album (plist-put album :tracks (cons track (plist-get album :tracks))))
+         (setq album (plist-put album :mtime (max (plist-get album :mtime) (or (plist-get track :mtime) 0))))
+         (unless (plist-get album :art)
+           (setq album (plist-put album :art (plist-get track :art))))
+         (puthash id album albums)))
+     supersonic-local--tracks)
+    (maphash
+     (lambda (id album)
+       (let ((tracks (plist-get album :tracks)))
+         (setq album (plist-put album :tracks (sort tracks #'supersonic-local--track<)))
+         (setq album (plist-put album :name (or (supersonic-local--most-common
+                                                  (mapcar (lambda (track) (plist-get track :album)) tracks))
+                                                 "(no album)")))
+         (setq album (plist-put album :artist (supersonic-local--most-common
+                                               (mapcar (lambda (track) (plist-get track :album-artist)) tracks))))
+         (puthash id album albums))
+       (let* ((name (plist-get album :artist))
+              (artist-id (supersonic-local--artist-key name))
+              (artist (or (gethash artist-id artists)
+                          (list :id artist-id :name (or name "(unknown artist)") :art nil :albums nil))))
+         (setq artist (plist-put artist :albums (cons id (plist-get artist :albums))))
+         (setq artist (plist-put artist :spellings
+                                 (append (mapcar (lambda (track) (plist-get track :album-artist))
+                                                 (plist-get album :tracks))
+                                         (plist-get artist :spellings))))
+         (setq artist (plist-put artist :name (or (supersonic-local--most-common (plist-get artist :spellings))
+                                                  "(unknown artist)")))
+         (unless (plist-get artist :art)
+           (setq artist (plist-put artist :art (plist-get album :art))))
+         (puthash artist-id artist artists)))
+     albums)
+    (setq supersonic-local--albums albums
+          supersonic-local--artists artists)))
+
+(defun supersonic-local--track< (a b)
+  "Return non-nil if track A comes before track B on their album."
+  (let ((da (or (plist-get a :disc) 1)) (db (or (plist-get b :disc) 1))
+        (ta (or (plist-get a :track) most-positive-fixnum)) (tb (or (plist-get b :track) most-positive-fixnum)))
+    (cond ((/= da db) (< da db))
+          ((/= ta tb) (< ta tb))
+          (t (string< (plist-get a :id) (plist-get b :id))))))
+
+(defun supersonic-local--files ()
+  "Return every music file under `supersonic-local-directories', with its root.
+Each element is (FILE . ROOT).  Hidden files and directories are
+skipped, and so is every file `supersonic-local-ignore-regexp' matches."
+  (let ((case-fold-search t)
+        (regexp (concat "\\.\\(" (regexp-opt supersonic-local-extensions) "\\)\\'"))
+        (files nil))
+    (dolist (directory supersonic-local-directories)
+      (let ((root (file-name-as-directory (file-truename (expand-file-name directory)))))
+        (when (file-directory-p root)
+          (dolist (file (directory-files-recursively
+                         root regexp nil
+                         (lambda (dir) (not (string-prefix-p "." (file-name-nondirectory dir))))
+                         t))
+            (unless (or (string-prefix-p "." (file-name-nondirectory file))
+                        (and supersonic-local-ignore-regexp
+                             (string-match-p supersonic-local-ignore-regexp file)))
+              (push (cons file root) files))))))
+    (nreverse files)))
+
+(aio-defun
+ supersonic-local--rescan ()
+ "Bring the index up to date with the files on disk, probing only changed ones."
+ (unless (and supersonic-local-ffprobe (file-executable-p supersonic-local-ffprobe))
+   (user-error "Reading local tags needs ffprobe; see `supersonic-local-ffprobe'"))
+ (let* ((old (or supersonic-local--tracks (make-hash-table :test #'equal)))
+        (new (make-hash-table :test #'equal))
+        (pending nil)
+        (probed 0))
+   (dolist (entry (supersonic-local--files))
+     (let* ((file (car entry))
+            (attributes (file-attributes file))
+            (known (gethash file old)))
+       (if (and known attributes
+                (equal (plist-get known :size) (file-attribute-size attributes))
+                (equal (plist-get known :mtime) (float-time (file-attribute-modification-time attributes))))
+           (puthash file known new)
+         (when attributes
+           (push (list file (cdr entry) attributes) pending)))))
+   (when pending
+     (message "[Supersonic] Reading tags of %d local file(s)..." (length pending)))
+   ;; A pool of workers, each probing one file at a time off the shared list.
+   (let ((workers nil))
+     (dotimes (_ (max 1 supersonic-local-scan-concurrency))
+       (push (funcall (aio-lambda ()
+                        (while pending
+                          (pcase-let ((`(,file ,root ,attributes) (pop pending)))
+                            (let ((probe (condition-case nil
+                                             (aio-await (supersonic-local--probe file))
+                                           (error nil))))
+                              (puthash file (supersonic-local--track file root probe attributes) new)
+                              (setq probed (1+ probed)))))))
+             workers))
+     (dolist (worker workers)
+       (aio-await worker)))
+   (setq supersonic-local--tracks new)
+   (supersonic-local--rebuild)
+   (supersonic-local--write-file (supersonic-local--index-file)
+                                 (list :version supersonic-local--index-version
+                                       :tracks (hash-table-values new)))
+   (message "[Supersonic] Local library: %d track(s)%s" (hash-table-count new)
+            (if (> probed 0) (format ", %d read anew" probed) ""))
+   new))
+
+(defun supersonic-local--load-index ()
+  "Load the cached index, returning non-nil if there was a usable one."
+  (let ((data (supersonic-local--read-file (supersonic-local--index-file))))
+    (when (eql (plist-get data :version) supersonic-local--index-version)
+      (let ((tracks (make-hash-table :test #'equal)))
+        (dolist (track (plist-get data :tracks))
+          (puthash (plist-get track :id) track tracks))
+        (setq supersonic-local--tracks tracks)
+        (supersonic-local--rebuild)
+        t))))
+
+(defun supersonic-local--start-scan ()
+  "Start a rescan unless one is running, and return its promise."
+  (or supersonic-local--scan
+      (setq supersonic-local--scan
+            (funcall (aio-lambda ()
+                       (condition-case err
+                           (prog1 (aio-await (supersonic-local--rescan))
+                             (setq supersonic-local--scan nil))
+                         (error
+                          (setq supersonic-local--scan nil)
+                          (signal (car err) (cdr err)))))))))
+
+(aio-defun
+ supersonic-local--ensure-index ()
+ "Make sure the index is loaded, scanning only if there is no cached one.
+A cached index is used right away, and refreshed in the background
+once per session."
+ (unless supersonic-local--tracks
+   (unless supersonic-local--history
+     (setq supersonic-local--history (supersonic-local--read-file (supersonic-local--history-file))))
+   (if (supersonic-local--load-index)
+       (ignore (supersonic-local--start-scan))
+     (aio-await (supersonic-local--start-scan)))))
+
+;;;###autoload
+(defun supersonic-local-rescan ()
+  "Rescan `supersonic-local-directories' for new, changed and removed files."
+  (interactive)
+  (ignore (supersonic-local--start-scan)))
+
+;;;
+;;; Operations
+;;;
+
+(defun supersonic-local--public (item)
+  "Return ITEM, a track, album or artist plist, without the index's own keys."
+  (cl-loop for (key value) on item by #'cddr
+           unless (memq key '(:tracks :albums :spellings :lyrics-tag :mtime))
+           append (list key value)))
+
+(defun supersonic-local--name< (a b)
+  "Return non-nil if plist A's name sorts before B's, ignoring case."
+  (string-collate-lessp (or (plist-get a :name) "") (or (plist-get b :name) "") nil t))
+
+(aio-defun
+ supersonic-local--artists-op () "Resolve to every local artist, by name."
+ (aio-await (supersonic-local--ensure-index))
+ (mapcar #'supersonic-local--public (sort (hash-table-values supersonic-local--artists) #'supersonic-local--name<)))
+
+(aio-defun
+ supersonic-local--artist-albums (id) "Resolve to the albums of local artist ID, oldest first."
+ (aio-await (supersonic-local--ensure-index))
+ (let ((albums (mapcar (lambda (album-id) (gethash album-id supersonic-local--albums))
+                       (plist-get (gethash id supersonic-local--artists) :albums))))
+   (mapcar #'supersonic-local--public
+           (sort (delq nil albums)
+                 (lambda (a b)
+                   (let ((ya (or (plist-get a :year) 0)) (yb (or (plist-get b :year) 0)))
+                     (if (/= ya yb) (< ya yb) (supersonic-local--name< a b))))))))
+
+(aio-defun
+ supersonic-local--album-list (type count)
+ "Resolve to at most COUNT local albums of list TYPE."
+ (aio-await (supersonic-local--ensure-index))
+ (let* ((all (hash-table-values supersonic-local--albums))
+        (albums
+         (pcase type
+           ('newest (sort all (lambda (a b) (> (plist-get a :mtime) (plist-get b :mtime)))))
+           ('random
+            (let ((vector (vconcat all)))
+              (cl-loop for i from (1- (length vector)) downto 1
+                       do (cl-rotatef (aref vector i) (aref vector (random (1+ i)))))
+              (append vector nil)))
+           ('recent (delq nil (mapcar (lambda (id) (gethash id supersonic-local--albums))
+                                      supersonic-local--history))))))
+   (mapcar #'supersonic-local--public (seq-take albums count))))
+
+(aio-defun
+ supersonic-local--album-tracks (id) "Resolve to the tracks of local album ID, in album order."
+ (aio-await (supersonic-local--ensure-index))
+ (mapcar #'supersonic-local--public (plist-get (gethash id supersonic-local--albums) :tracks)))
+
+(aio-defun
+ supersonic-local--track-op (id) "Resolve to local track ID."
+ (aio-await (supersonic-local--ensure-index))
+ (let ((track (gethash id supersonic-local--tracks)))
+   (unless track
+     (error "No local track %s" id))
+   (supersonic-local--public track)))
+
+(defun supersonic-local--matches-p (words &rest fields)
+  "Return non-nil if every one of WORDS occurs in one of FIELDS, ignoring case."
+  (let ((haystack (downcase (string-join (delq nil fields) " "))))
+    (seq-every-p (lambda (word) (string-search word haystack)) words)))
+
+(aio-defun
+ supersonic-local--search (query)
+ "Resolve to the local artists, albums and tracks matching every word of QUERY."
+ (aio-await (supersonic-local--ensure-index))
+ (let ((words (split-string (downcase query) nil t))
+       (limit 50))
+   (list
+    :artists (mapcar #'supersonic-local--public
+                     (seq-take (sort (seq-filter (lambda (a) (supersonic-local--matches-p words (plist-get a :name)))
+                                                 (hash-table-values supersonic-local--artists))
+                                     #'supersonic-local--name<)
+                               limit))
+    :albums (mapcar #'supersonic-local--public
+                    (seq-take (sort (seq-filter (lambda (a) (supersonic-local--matches-p
+                                                             words (plist-get a :name) (plist-get a :artist)))
+                                                (hash-table-values supersonic-local--albums))
+                                    #'supersonic-local--name<)
+                              limit))
+    :tracks (mapcar #'supersonic-local--public
+                    (seq-take (seq-filter (lambda (track)
+                                            (supersonic-local--matches-p
+                                             words (plist-get track :title) (plist-get track :artist)
+                                             (plist-get track :album)))
+                                          (sort (hash-table-values supersonic-local--tracks)
+                                                (lambda (a b) (string< (plist-get a :id) (plist-get b :id)))))
+                              limit)))))
+
+(aio-defun
+ supersonic-local--stream-url (id &optional _format)
+ "Resolve to the file local track ID is played from: its own name."
+ (unless (file-readable-p id)
+   (error "Local file %s is gone" id))
+ id)
+
+(defun supersonic-local--scrobble (id now-playing)
+  "Remember the album of local track ID as played, when it starts.
+NOW-PLAYING is non-nil when it has just started; that is when it counts."
+  (when (and now-playing supersonic-local--tracks)
+    (let ((track (gethash id supersonic-local--tracks)))
+      (when track
+        (let ((album (supersonic-local--album-key track)))
+          (setq supersonic-local--history
+                (seq-take (cons album (delete album supersonic-local--history)) 100))
+          (supersonic-local--write-file (supersonic-local--history-file) supersonic-local--history))))))
+
+(defun supersonic-local--embedded-art (file)
+  "Return a promise resolving to the bytes of the art embedded in FILE."
+  (let ((promise (aio-promise))
+        (buffer (generate-new-buffer " *supersonic-art*")))
+    (with-current-buffer buffer
+      (set-buffer-multibyte nil))
+    (make-process
+     :name "supersonic-embedded-art"
+     :buffer buffer
+     :command (list supersonic-local-ffmpeg "-v" "quiet" "-i" file
+                    "-an" "-map" "0:v:0" "-c:v" "copy" "-f" "image2pipe" "-")
+     :coding 'binary
+     :connection-type 'pipe
+     :noquery t
+     :stderr nil
+     :sentinel
+     (lambda (process _event)
+       (unless (process-live-p process)
+         (let ((data (with-current-buffer buffer (buffer-string)))
+               (ok (and (eq (process-status process) 'exit) (zerop (process-exit-status process)))))
+           (kill-buffer buffer)
+           (aio-resolve promise
+                        (lambda ()
+                          (if (and ok (> (length data) 0))
+                              data
+                            (error "No art embedded in %s" file))))))))
+    promise))
+
+(aio-defun
+ supersonic-local--cover-art (art _size)
+ "Resolve to the bytes of local cover art ART, a file or a track's embedded art."
+ (cond
+  ((string-prefix-p "file:" art)
+   (with-temp-buffer
+     (set-buffer-multibyte nil)
+     (insert-file-contents-literally (substring art 5))
+     (buffer-string)))
+  ((string-prefix-p "embedded:" art)
+   (aio-await (supersonic-local--embedded-art (substring art 9))))
+  (t (error "Unknown local art %s" art))))
+
+(aio-defun
+ supersonic-local--lyrics (id)
+ "Resolve to the lyrics of local track ID: an .lrc file next to it, else its tag."
+ (require 'supersonic-lyrics)
+ (let* ((case-fold-search t)
+        (base (file-name-sans-extension (file-name-nondirectory id)))
+        (lrc (seq-find (lambda (file) (string-equal (file-name-sans-extension (file-name-nondirectory file)) base))
+                       (directory-files (file-name-directory id) t "\\.lrc\\'"))))
+   (or (and lrc
+            (supersonic-lyrics-parse-lrc
+             (with-temp-buffer
+               (let ((coding-system-for-read 'utf-8))
+                 (insert-file-contents lrc))
+               (buffer-string))
+             "lrc file"))
+       (progn
+         (aio-await (supersonic-local--ensure-index))
+         (supersonic-lyrics-parse-lrc (plist-get (gethash id supersonic-local--tracks) :lyrics-tag) "tags")))))
+
+(defun supersonic-local--cache-namespace ()
+  "Return the namespace of local ids, which are file names already."
+  "local")
+
+(defun supersonic-local--config-hints ()
+  "Return what to check when the local library fails."
+  (list "Check that supersonic-local-directories names your music directories"
+        "Check that ffprobe (from FFmpeg) is installed, see supersonic-local-ffprobe"))
+
+(supersonic-provider-register
+ 'local
+ `((artists . supersonic-local--artists-op)
+   (artist-albums . supersonic-local--artist-albums)
+   (album-list . supersonic-local--album-list)
+   (album-tracks . supersonic-local--album-tracks)
+   (track . supersonic-local--track-op)
+   (search . supersonic-local--search)
+   (stream-url . supersonic-local--stream-url)
+   (scrobble . supersonic-local--scrobble)
+   (cover-art . supersonic-local--cover-art)
+   (lyrics . supersonic-local--lyrics)
+   (cache-namespace . supersonic-local--cache-namespace)
+   (config-hints . supersonic-local--config-hints)))
+
+;;;
+;;; Switching to and from local files
+;;;
+
+(defvar supersonic-local--previous-provider nil
+  "The provider active before `supersonic-local-toggle' switched to `local'.")
+
+;;;###autoload
+(defun supersonic-local-toggle ()
+  "Switch to the local files, or back to the provider active before them.
+Like every provider switch, this stops playback."
+  (interactive)
+  (require 'supersonic)
+  (if (eq supersonic-provider 'local)
+      (supersonic-provider-switch (or supersonic-local--previous-provider
+                                      (car (remq 'local (supersonic-provider-names)))))
+    (setq supersonic-local--previous-provider supersonic-provider)
+    (supersonic-provider-switch 'local)))
+
+(defconst supersonic-local--offline-regexp
+  (regexp-opt '("No answer from" "connection" "Connection" "refused" "unreachable" "Name or service"
+                "Network is" "network" "host" "timed out" "open-network-stream" "Failed to fetch"))
+  "Matches the error messages of a request that never reached the server.")
+
+(defvar supersonic-local--offered-at nil
+  "When the fallback to local files was last offered, as a float time.")
+
+(defun supersonic-local--maybe-offer-fallback (_description err)
+  "Offer switching to local files if ERR says the server is unreachable.
+On `supersonic-async-error-functions'.  Offered at most once a minute,
+as one unreachable server fails several requests at once."
+  (when (and supersonic-local-offer-fallback
+             supersonic-local-directories
+             (not (eq supersonic-provider 'local))
+             (string-match-p supersonic-local--offline-regexp (error-message-string err))
+             (or (not supersonic-local--offered-at)
+                 (> (- (float-time) supersonic-local--offered-at) 60)))
+    (setq supersonic-local--offered-at (float-time))
+    ;; Out of the process callback the error was reported from.
+    (run-at-time 0 nil
+                 (lambda ()
+                   (when (y-or-n-p "[Supersonic] Server unreachable.  Switch to local files? ")
+                     (supersonic-local-toggle))))))
+
+(add-hook 'supersonic-async-error-functions #'supersonic-local--maybe-offer-fallback)
+
+(defun supersonic-local-unload-function ()
+  "Remove the fallback offer from `supersonic-async-error-functions'."
+  (remove-hook 'supersonic-async-error-functions #'supersonic-local--maybe-offer-fallback)
+  nil)
+
+(provide 'supersonic-local)
+
+;;; supersonic-local.el ends here

@@ -263,6 +263,36 @@ going to the previous track more than a few seconds into one starts
 that one over. Music Assistant keeps its own play history, so nothing
 is scrobbled.
 
+## Local files
+
+`supersonic-local.el` adds a `local` provider: the music files under
+`supersonic-local-directories`, played through mpv with no server --
+for when it is unreachable, or for music it does not have.
+
+```elisp
+(use-package supersonic
+  :config
+  (require 'supersonic-local)
+  (setq supersonic-local-directories '("~/music/")
+        ;; Leave out Syncthing's conflict copies, say:
+        supersonic-local-ignore-regexp "\\.sync-conflict-"))
+```
+
+Tags are read with `ffprobe`, so FFmpeg must be installed.  The index
+is cached in `supersonic-cache-path`; only new or changed files are
+read again, in the background, once a session or on
+`supersonic-local-rescan`.  Tags missing are guessed from an
+`Artist/Album (Year)/NN - Title` layout, artists and albums whose tags
+differ only in case are one, cover art is a `cover.jpg`/`folder.jpg`
+next to the files or else the art embedded in them, and lyrics are an
+`.lrc` file named like the track or else its lyrics tag.  "Recent
+albums" are those played from the local files.
+
+`supersonic-local-toggle` switches to the local files and back to the
+provider before.  While `supersonic-local-offer-fallback` is non-nil, a
+request failing because the server cannot be reached offers that
+switch.  Like any provider switch, it stops playback.
+
 ## Switching providers
 
 With Music Assistant loaded alongside the built-in Subsonic provider,
@@ -377,6 +407,7 @@ a prefix key of your own:
 | `o` / `q` / `l` | now playing, play queue, lyrics |
 | `a` `r` `e` `w` | artists, random, recent, newest albums |
 | `C` | clear the play queue but the current track |
+| `O` | switch to local files and back, see [Local files](#local-files) |
 | `m` | the `supersonic` transient |
 
 Every supersonic buffer shares the playback keys `SPC`, `<` `>`

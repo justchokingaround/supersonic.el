@@ -56,6 +56,7 @@
 (require 'supersonic-waveform)
 
 (declare-function supersonic-lyrics "supersonic-lyrics")
+(declare-function supersonic-local-toggle "supersonic-local")
 
 (defcustom supersonic-now-playing-layout-functions
   (list #'supersonic-now-playing-layout-art
@@ -204,6 +205,7 @@ binds itself afterwards win."
     (define-key map (kbd "R") #'supersonic-cycle-repeat)
     (define-key map (kbd "C") #'supersonic-clear-queue)
     (define-key map (kbd "l") #'supersonic-lyrics)
+    (define-key map (kbd "O") #'supersonic-local-toggle)
     map)
   "Prefix keymap of supersonic's commands, for binding to a key of your own.
 For example:
@@ -2147,7 +2149,8 @@ provider is missing."
    ("-" "Volume down" supersonic-volume-down :transient t)
    ("C" "Clear queue" supersonic-clear-queue)
    ("k" "Switch backend" supersonic-playback-switch-backend)
-   ("P" "Switch provider" supersonic-provider-switch)]])
+   ("P" "Switch provider" supersonic-provider-switch)
+   ("O" "Local files / back" supersonic-local-toggle)]])
 
 (defun supersonic-unload-function ()
   "Undo the `supersonic-playback.el' hook entries a queue/now-playing buffer added.

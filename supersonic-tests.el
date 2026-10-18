@@ -8578,6 +8578,113 @@ win, and plain lyrics are the last resort, the provider's first."
       (should (equal online-plain (fetch nil online-plain)))
       (should-not (fetch nil nil)))))
 
+(ert-deftest supersonic-tests-local-track-from-probe ()
+  "A track is built from ffprobe's JSON, tag names normalized, the container's
+tags winning over the stream's, embedded art and lyrics tags noticed."
+  (require 'supersonic-local)
+  (let* ((probe '((format (duration . "203.65")
+                          (tags (Title . "Sorry for Now") (ARTIST . "Linkin Park") (album_artist . "Linkin Park")
+                                (album . "One More Light") (track . "7/10") (date . "2017-05-19")
+                                ("UNSYNCED LYRICS" . "line one\nline two")))
+                  (streams ((codec_type . "audio") (tags (title . "Stream title") (genre . "Rock")))
+                           ((codec_type . "video") (disposition (attached_pic . 1))))))
+         (attributes (file-attributes (locate-library "supersonic-local")))
+         (track (supersonic-local--track "/m/Linkin Park/One More Light/07 - x.mp3" "/m/" probe attributes)))
+    (should (equal "Sorry for Now" (plist-get track :title)))
+    (should (equal "Linkin Park" (plist-get track :album-artist)))
+    (should (equal "One More Light" (plist-get track :album)))
+    (should (equal 7 (plist-get track :track)))
+    (should (equal 2017 (plist-get track :year)))
+    (should (equal 204 (plist-get track :duration)))
+    (should (equal "Rock" (plist-get track :genre)))
+    (should (equal "mp3" (plist-get track :suffix)))
+    (should (equal "embedded:/m/Linkin Park/One More Light/07 - x.mp3" (plist-get track :art)))
+    (should (equal "line one\nline two" (plist-get track :lyrics-tag)))))
+
+(ert-deftest supersonic-tests-local-guess-from-path ()
+  "Without tags, an Artist/Album (Year)/NN - Title layout fills them in."
+  (require 'supersonic-local)
+  (should (equal '(:title "Ruler of Everything" :track 3 :artist "Tally Hall" :album "Good & Evil")
+                 (supersonic-local--guess "/m/Tally Hall/Good & Evil (2011)/03 - Ruler of Everything.flac" "/m/")))
+  (should (equal '(:title "Song" :track nil :artist "Artist" :album nil)
+                 (supersonic-local--guess "/m/Artist/Song.mp3" "/m/"))))
+
+(defmacro supersonic-tests--with-local-index (tracks &rest body)
+  "Run BODY with the local index made of TRACKS, plists with `:id'."
+  (declare (indent 1))
+  `(let ((supersonic-local--tracks (make-hash-table :test #'equal))
+         (supersonic-local--albums nil)
+         (supersonic-local--artists nil)
+         (supersonic-local--history nil)
+         (supersonic-provider 'local))
+     (dolist (track ,tracks)
+       (puthash (plist-get track :id) track supersonic-local--tracks))
+     (supersonic-local--rebuild)
+     ,@body))
+
+(ert-deftest supersonic-tests-local-albums-and-artists ()
+  "Albums group by album artist and album, ignoring case and taking the
+spelling most tracks use; tracks sort by disc and number."
+  (require 'supersonic-local)
+  (supersonic-tests--with-local-index
+      (list '(:id "/a/2" :title "Two" :album-artist "MIKA" :album "Hyperlove" :track 2 :mtime 5)
+            '(:id "/a/1" :title "One" :album-artist "Mika" :album "Hyperlove" :track 1 :mtime 1)
+            '(:id "/a/3" :title "Three" :album-artist "Mika" :album "hyperlove" :track 1 :disc 2 :mtime 2)
+            '(:id "/b/1" :title "Numb" :album-artist "Linkin Park" :album "Meteora" :year 2003 :mtime 9))
+    (let ((artists (aio-wait-for (supersonic-local--artists-op))))
+      (should (equal '("Linkin Park" "Mika") (mapcar (lambda (a) (plist-get a :name)) artists)))
+      (let ((albums (aio-wait-for (supersonic-local--artist-albums (plist-get (cadr artists) :id)))))
+        (should (equal '("Hyperlove") (mapcar (lambda (a) (plist-get a :name)) albums)))
+        (should (equal '("One" "Two" "Three")
+                       (mapcar (lambda (x) (plist-get x :title))
+                               (aio-wait-for (supersonic-local--album-tracks (plist-get (car albums) :id))))))
+        (should-not (plist-member (car albums) :tracks))))
+    (should (equal '("Meteora" "Hyperlove")
+                   (mapcar (lambda (a) (plist-get a :name)) (aio-wait-for (supersonic-local--album-list 'newest 10)))))))
+
+(ert-deftest supersonic-tests-local-search-needs-every-word ()
+  "Search matches when every word of the query occurs in some field."
+  (require 'supersonic-local)
+  (supersonic-tests--with-local-index
+      (list '(:id "/1" :title "Numb" :artist "Linkin Park" :album-artist "Linkin Park" :album "Meteora")
+            '(:id "/2" :title "Numb" :artist "Xxxtentacion" :album-artist "Xxxtentacion" :album "?"))
+    (let ((results (aio-wait-for (supersonic-local--search "numb LINKIN"))))
+      (should (equal '("/1") (mapcar (lambda (x) (plist-get x :id)) (plist-get results :tracks))))
+      (should-not (plist-get results :artists)))
+    (should (equal '("Linkin Park")
+                   (mapcar (lambda (x) (plist-get x :name))
+                           (plist-get (aio-wait-for (supersonic-local--search "linkin")) :artists))))))
+
+(ert-deftest supersonic-tests-local-recent-is-play-history ()
+  "Starting a track puts its album at the front of the `recent' list."
+  (require 'supersonic-local)
+  (supersonic-tests--with-local-index
+      (list '(:id "/1" :title "a" :album-artist "A" :album "X")
+            '(:id "/2" :title "b" :album-artist "B" :album "Y"))
+    (cl-letf (((symbol-function 'supersonic-local--write-file) #'ignore))
+      (supersonic-local--scrobble "/1" t)
+      (supersonic-local--scrobble "/2" t)
+      (supersonic-local--scrobble "/1" nil))
+    (should (equal '("Y" "X") (mapcar (lambda (a) (plist-get a :name))
+                                      (aio-wait-for (supersonic-local--album-list 'recent 10)))))))
+
+(ert-deftest supersonic-tests-local-offers-fallback-only-when-offline ()
+  "The switch to local files is offered for a connection failure, at most
+once a minute, and not for other errors."
+  (require 'supersonic-local)
+  (let ((supersonic-local-offer-fallback t)
+        (supersonic-local-directories '("/m"))
+        (supersonic-provider 'subsonic)
+        (supersonic-local--offered-at nil)
+        (scheduled 0))
+    (cl-letf (((symbol-function 'run-at-time) (lambda (&rest _) (cl-incf scheduled))))
+      (supersonic-local--maybe-offer-fallback "fetch artists" '(user-error "Wrong username or password"))
+      (should (= 0 scheduled))
+      (supersonic-local--maybe-offer-fallback "fetch artists" '(error "No answer from http://x/rest within 10 seconds"))
+      (should (= 1 scheduled))
+      (supersonic-local--maybe-offer-fallback "fetch albums" '(error "No answer from http://x/rest within 10 seconds"))
+      (should (= 1 scheduled)))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here

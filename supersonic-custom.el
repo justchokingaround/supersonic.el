@@ -468,5 +468,52 @@ The lyrics buffer's ( and ) keys adjust it."
   "Face of the synced lyrics lines already sung."
   :group 'supersonic-lyrics)
 
+;;;; Local files
+
+(defgroup supersonic-local nil
+  "Music files on this machine, played with no server."
+  :group 'supersonic)
+
+(defcustom supersonic-local-directories nil
+  "Directories the `local' provider finds music files under, recursively."
+  :type '(repeat directory)
+  :group 'supersonic-local)
+
+(defcustom supersonic-local-extensions
+  '("flac" "mp3" "m4a" "ogg" "opus" "oga" "wav" "aac" "aiff" "aif" "wv" "ape" "wma" "mka")
+  "File name extensions of the files the `local' provider takes for music."
+  :type '(repeat string)
+  :group 'supersonic-local)
+
+(defcustom supersonic-local-ignore-regexp nil
+  "Regexp matching music files the `local' provider skips, or nil.
+Matched against the absolute file name.  Hidden files and directories
+are always skipped.  For example \"\\.sync-conflict-\" leaves out the
+conflict copies Syncthing makes."
+  :type '(choice (const :tag "None" nil) regexp)
+  :group 'supersonic-local)
+
+(defcustom supersonic-local-ffprobe (executable-find "ffprobe")
+  "The ffprobe executable the `local' provider reads tags with."
+  :type '(choice (const :tag "Not installed" nil) file)
+  :group 'supersonic-local)
+
+(defcustom supersonic-local-ffmpeg (executable-find "ffmpeg")
+  "The ffmpeg executable the `local' provider extracts embedded cover art with."
+  :type '(choice (const :tag "Not installed" nil) file)
+  :group 'supersonic-local)
+
+(defcustom supersonic-local-scan-concurrency 8
+  "How many files the `local' provider reads tags of at once."
+  :type 'integer
+  :group 'supersonic-local)
+
+(defcustom supersonic-local-offer-fallback t
+  "Non-nil to offer switching to local files when the server is unreachable.
+Only once `supersonic-local' is loaded and `supersonic-local-directories'
+is set."
+  :type 'boolean
+  :group 'supersonic-local)
+
 (provide 'supersonic-custom)
 ;;; supersonic-custom.el ends here
