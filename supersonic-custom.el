@@ -690,5 +690,43 @@ a row the provider cannot fill, or that is empty, is left out."
   "Face of the key hints in the browser."
   :group 'supersonic-browse)
 
+;;;; The now-playing page
+
+(defcustom supersonic-player-art-size 480
+  "Largest size in pixels the now-playing page draws the cover at.
+It is drawn smaller in a narrow or short window."
+  :type 'integer
+  :group 'supersonic-browse)
+
+(defcustom supersonic-player-upcoming-count 5
+  "How many of the tracks to play next the now-playing page lists."
+  :type 'integer
+  :group 'supersonic-browse)
+
+(defface supersonic-player-title
+  '((t :inherit bold :height 2.0))
+  "Face of the title on the now-playing page."
+  :group 'supersonic-browse)
+
+(defface supersonic-player-artist
+  '((t :inherit supersonic-browse-accent :height 1.25))
+  "Face of the artist on the now-playing page."
+  :group 'supersonic-browse)
+
+(defface supersonic-player-album
+  '((t :inherit shadow :height 1.25))
+  "Face of the album on the now-playing page."
+  :group 'supersonic-browse)
+
+(defface supersonic-player-lyric
+  '((t :inherit (bold supersonic-browse-accent) :height 1.3))
+  "Face of the lyrics line being sung, on the now-playing page."
+  :group 'supersonic-browse)
+
+(defface supersonic-player-lyric-next
+  '((t :inherit shadow :height 1.1))
+  "Face of the next lyrics line, on the now-playing page."
+  :group 'supersonic-browse)
+
 (provide 'supersonic-custom)
 ;;; supersonic-custom.el ends here

@@ -949,6 +949,10 @@ window's frame draws it, and loads finish in process callbacks."
     (when shape
       (put-text-property pos (1+ pos) 'display
                          (supersonic-browse--tile-image (get-text-property pos 'supersonic-browse-item) shape on)))
+    (when (get-text-property pos 'supersonic-browse-image-function)
+      ;; An item drawing its own image, in or out of focus.
+      (put-text-property pos (1+ pos) 'display
+                         (funcall (get-text-property pos 'supersonic-browse-image-function) on)))
     (when (get-text-property pos 'supersonic-browse-button)
       (put-text-property pos (1+ pos) 'display
                          (supersonic-browse--button-image (get-text-property pos 'supersonic-browse-button)
@@ -975,7 +979,7 @@ window's frame draws it, and loads finish in process callbacks."
           (move-overlay supersonic-browse--title-overlay pos
                         (or (next-single-property-change pos 'supersonic-browse-key) (point-max))))
          (t (delete-overlay supersonic-browse--title-overlay)))
-        (if (eq (car-safe key) 'track)
+        (if (or (eq (car-safe key) 'track) (get-text-property pos 'supersonic-browse-row))
             (let ((start (save-excursion (goto-char pos) (line-beginning-position)))
                   (end (save-excursion (goto-char pos) (1+ (line-end-position))))
                   (accent (supersonic-browse--accent)))
