@@ -127,14 +127,15 @@ Windows does not support; this is not implemented for windows-nt"))
     (supersonic-mpv-kill)
     (let ((socket (make-temp-name (expand-file-name "supersonic-mpv-" temporary-file-directory))))
       (setq supersonic-mpv--process
-            (start-process "supersonic-player" nil supersonic-mpv
+            (apply #'start-process "supersonic-player" nil supersonic-mpv
                            "--no-terminal"
                            "--really-quiet"
                            "--no-video"
                            "--no-config"
                            "--idle=once"
                            (format "--volume=%d" supersonic-default-volume)
-                           (concat "--input-ipc-server=" socket)))
+                           (concat "--input-ipc-server=" socket)
+                           supersonic-mpv-arguments))
       (set-process-query-on-exit-flag supersonic-mpv--process nil)
       (set-process-sentinel
        supersonic-mpv--process

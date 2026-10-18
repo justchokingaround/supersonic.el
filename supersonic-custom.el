@@ -53,6 +53,13 @@ assumed."
   :type '(choice (const :tag "Not available" nil) (file :tag "Path to mpv"))
   :group 'supersonic)
 
+(defcustom supersonic-mpv-arguments nil
+  "Extra command line arguments for the mpv supersonic.el starts.
+For example \='(\"--audio-device=pipewire/my-headphones\") to play on a
+given device, or \='(\"--ao=null\") to play silently."
+  :type '(repeat string)
+  :group 'supersonic)
+
 (defcustom supersonic-default-volume 100
   "Default volume for mpv to use."
   :type 'integer

@@ -30,10 +30,13 @@ even if BODY signals."
        (ert-skip "mpv not found")
      (cl-letf (((symbol-function 'supersonic-build-url)
                 (lambda (_endpoint extra-query) (alist-get "id" extra-query nil nil #'equal))))
-       (unwind-protect
+       ;; Silent: the test tracks are sine tones, which would otherwise
+       ;; sound on whatever the machine running the tests plays to.
+       (let ((supersonic-mpv-arguments '("--ao=null")))
+        (unwind-protect
            (progn
              ,@body)
-         (supersonic-mpv-kill)))))
+          (supersonic-mpv-kill))))))
 
 (defun supersonic-tests--wait-for (predicate &optional timeout)
   "Busy-wait until PREDICATE is non-nil or TIMEOUT (default 5s) elapses.
