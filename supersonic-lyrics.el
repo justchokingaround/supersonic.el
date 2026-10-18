@@ -106,10 +106,12 @@ nil for blank TEXT."
               (setq start (match-end 0)))))
          (t (push (cons nil (string-trim-right line)) plain))))
       (if synced
-          (list :synced t
-                :lines (mapcar (lambda (line) (cons (max 0 (- (car line) offset)) (cdr line)))
-                               (sort (nreverse synced) (lambda (a b) (< (car a) (car b)))))
-                :source source)
+          (supersonic-lyrics--fold-duplicates
+           (list :synced t
+                 :lines (mapcar (lambda (line) (cons (max 0 (- (car line) offset)) (cdr line)))
+                                ;; `sort' is stable: lines sharing a time keep file order.
+                                (sort (nreverse synced) (lambda (a b) (< (car a) (car b)))))
+                 :source source))
         (let ((lines (nreverse plain)))
           ;; Keep blank lines between verses, not around the whole text.
           (while (and lines (string-empty-p (string-trim (cdar lines))))
@@ -118,6 +120,49 @@ nil for blank TEXT."
           (while (and lines (string-empty-p (string-trim (cdar lines))))
             (setq lines (cdr lines)))
           (list :synced nil :lines (nreverse lines) :source source))))))
+
+(defun supersonic-lyrics--fold-duplicates (lyrics)
+  "Read the second of two LYRICS lines sharing a time as the first's translation.
+The usual way LRC files carry a translation: each line twice, original
+first.  Lines are left alone unless `supersonic-lyrics-lrc-translations'
+is non-nil and at least a third of them come in such pairs."
+  (let* ((lines (plist-get lyrics :lines))
+         (pairs (cl-loop for (a b) on lines
+                         count (and b (eql (car a) (car b))))))
+    (if (not (and supersonic-lyrics-lrc-translations lines
+                  (>= (* 3 pairs) (length lines))
+                  (> pairs 0)))
+        lyrics
+      (let ((kept nil)
+            (translation nil))
+        (while lines
+          (let ((line (pop lines)))
+            (push line kept)
+            (push (and lines (eql (car line) (caar lines)) (cdr (pop lines))) translation)
+            ;; A third line at the same time is no translation of ours.
+            (while (and lines (eql (car line) (caar lines)))
+              (pop lines))))
+        (list :synced t :lines (nreverse kept) :source (plist-get lyrics :source)
+              :translation (nreverse translation) :translation-source "lrc")))))
+
+(defun supersonic-lyrics-align-translation (lines translated)
+  "Return TRANSLATED, lyrics lines, as a translation aligned with LINES.
+Both are lists of (MS . TEXT).  Synced lines are matched by start time
+within half a second, others by position when the counts agree.
+Returns a list of strings or nils as long as LINES, or nil if nothing
+lines up."
+  (let ((result
+         (cond
+          ((and (caar lines) (caar translated))
+           (mapcar (lambda (line)
+                     (let ((match (seq-find (lambda (other) (<= (abs (- (car other) (car line))) 500))
+                                            translated)))
+                       (and match (cdr match))))
+                   lines))
+          ((= (length lines) (length translated))
+           (mapcar #'cdr translated)))))
+    (and (seq-some (lambda (text) (and text (not (string-empty-p text)))) result)
+         result)))
 
 (defun supersonic-lyrics--line-index (lyrics ms)
   "Return the index of the line of LYRICS being sung MS milliseconds in.
@@ -309,7 +354,8 @@ TRACK is its track plist.  Answers from the cache unless REFRESH."
        (progn
          (puthash track-id cached supersonic-lyrics--cache)
          (and (not (eq cached 'none)) cached))
-     (let ((lyrics (aio-await (supersonic-lyrics--fetch track-id track))))
+     (let ((lyrics (supersonic-lyrics--resolve-alternatives
+                    (aio-await (supersonic-lyrics--fetch track-id track)))))
        ;; A miss is only remembered for the session: lyrics may turn
        ;; up later, on the server or on LRCLIB.
        (puthash track-id (or lyrics 'none) supersonic-lyrics--cache)
@@ -318,7 +364,7 @@ TRACK is its track plist.  Answers from the cache unless REFRESH."
        lyrics))))
 
 ;;;
-;;; Following playback
+;;; State
 ;;;
 
 (defvar supersonic-lyrics-follow-mode)
@@ -342,6 +388,186 @@ TRACK is its track plist.  Answers from the cache unless REFRESH."
 (defvar supersonic-lyrics--generation 0
   "Bumped on every track change, so a slow lookup cannot clobber a newer one.")
 (defvar supersonic-lyrics--last-echo nil "The line last put in the echo area.")
+
+;;;
+;;; Translations
+;;;
+
+(defun supersonic-lyrics--target-language-p (lang)
+  "Return non-nil if `supersonic-lyrics-translation-codes' has language code LANG."
+  (and lang (member (downcase lang) supersonic-lyrics-translation-codes)))
+
+(defun supersonic-lyrics--translated-by (lyrics other source)
+  "Return LYRICS with OTHER, lyrics of the same song, aligned as its translation.
+SOURCE names where OTHER came from.  LYRICS is returned as is if the
+two do not line up."
+  (let ((translation (supersonic-lyrics-align-translation (plist-get lyrics :lines) (plist-get other :lines))))
+    (if translation
+        (append (list :translation translation :translation-source source)
+                (supersonic-lyrics--without lyrics '(:translation :translation-source :translation-none)))
+      lyrics)))
+
+(defun supersonic-lyrics--without (plist keys)
+  "Return PLIST without KEYS."
+  (cl-loop for (key value) on plist by #'cddr
+           unless (memq key keys) append (list key value)))
+
+(defun supersonic-lyrics--resolve-alternatives (lyrics)
+  "Pick a translation for LYRICS out of its `:alternatives', and drop them.
+An alternative in a language of `supersonic-lyrics-translation-codes'
+becomes the translation.  Should LYRICS themselves be in that language
+and an alternative not, they swap places, as long as no sync is lost."
+  (let ((alternatives (plist-get lyrics :alternatives))
+        (lyrics (supersonic-lyrics--without lyrics '(:alternatives))))
+    (cond
+     ((or (null alternatives) (plist-get lyrics :translation)) lyrics)
+     ((and (supersonic-lyrics--target-language-p (plist-get lyrics :lang))
+           (seq-find (lambda (other)
+                       (and (not (supersonic-lyrics--target-language-p (plist-get other :lang)))
+                            (or (plist-get other :synced) (not (plist-get lyrics :synced)))))
+                     alternatives))
+      (let ((original (seq-find (lambda (other)
+                                  (and (not (supersonic-lyrics--target-language-p (plist-get other :lang)))
+                                       (or (plist-get other :synced) (not (plist-get lyrics :synced)))))
+                                alternatives)))
+        (supersonic-lyrics--translated-by original lyrics (plist-get lyrics :source))))
+     (t
+      (let ((other (seq-find (lambda (other) (supersonic-lyrics--target-language-p (plist-get other :lang)))
+                             alternatives)))
+        (if other
+            (supersonic-lyrics--translated-by lyrics other (plist-get other :source))
+          lyrics))))))
+
+(defun supersonic-lyrics--translation-directory ()
+  "Return the directory translations of your own are looked for in."
+  (or supersonic-lyrics-translation-directory
+      (expand-file-name "lyrics-translations" supersonic-cache-path)))
+
+(defun supersonic-lyrics--file-name-part (string)
+  "Return STRING made safe for use in a file name."
+  (string-trim (replace-regexp-in-string "[/\\:*?\"<>|]" "_" (or string ""))))
+
+(defun supersonic-lyrics-translation-file (track)
+  "Return the file a translation of TRACK of your own is looked for in, if any.
+That is \"ARTIST - TITLE.lrc\" or \".txt\" in
+`supersonic-lyrics-translation-directory', compared ignoring case.  A
+.txt file has one line per lyrics line; an .lrc file is matched to the
+lyrics by time."
+  (let ((directory (supersonic-lyrics--translation-directory))
+        (base (downcase (concat (supersonic-lyrics--file-name-part (plist-get track :artist)) " - "
+                                (supersonic-lyrics--file-name-part (plist-get track :title))))))
+    (when (file-directory-p directory)
+      (seq-find (lambda (file) (equal (downcase (file-name-sans-extension (file-name-nondirectory file))) base))
+                (directory-files directory t "\\.\\(lrc\\|txt\\)\\'")))))
+
+(defun supersonic-lyrics--with-user-translation (lyrics track)
+  "Return LYRICS translated by your own file for TRACK, if there is one.
+Translations that came with the lyrics themselves win; one of your own
+wins over a machine translation."
+  (let ((file (and lyrics
+                   (not (member (plist-get lyrics :translation-source) '("lrc" "server" "lrclib")))
+                   (supersonic-lyrics-translation-file track))))
+    (if (not file)
+        lyrics
+      (let ((other (supersonic-lyrics-parse-lrc
+                    (with-temp-buffer
+                      (let ((coding-system-for-read 'utf-8))
+                        (insert-file-contents file))
+                      (buffer-string))
+                    "file")))
+        (if (and other (plist-get lyrics :synced) (not (plist-get other :synced)))
+            ;; Plain text against synced lyrics: by position, blank lines and all.
+            (let ((lines (plist-get lyrics :lines))
+                  (texts (mapcar #'cdr (plist-get other :lines))))
+              (if (= (length lines) (length texts))
+                  (append (list :translation texts :translation-source "your file")
+                          (supersonic-lyrics--without lyrics '(:translation :translation-source)))
+                (message "[Supersonic] %s has %d lines, the lyrics %d; not used"
+                         (file-name-nondirectory file) (length texts) (length lines))
+                lyrics))
+          (supersonic-lyrics--translated-by lyrics other "your file"))))))
+
+(defun supersonic-lyrics--machine-translate (interactive)
+  "Have `supersonic-lyrics-translate-function' translate the current lyrics.
+Skipped for lyrics already translated, or found to need none, unless
+INTERACTIVE, which also reports what happened."
+  (let ((lyrics supersonic-lyrics--lyrics)
+        (track supersonic-lyrics--track)
+        (track-id supersonic-lyrics--track-id)
+        (generation supersonic-lyrics--generation))
+    (cond
+     ((not supersonic-lyrics-translate-function)
+      (when interactive
+        (user-error "No `supersonic-lyrics-translate-function' to translate with")))
+     ((not lyrics)
+      (when interactive (user-error "No lyrics to translate")))
+     ((and (not interactive)
+           (or (plist-get lyrics :translation) (plist-get lyrics :translation-none))))
+     (t
+      (when interactive
+        (message "[Supersonic] Translating lyrics..."))
+      (funcall
+       supersonic-lyrics-translate-function track (mapcar #'cdr (plist-get lyrics :lines))
+       supersonic-lyrics-translation-language
+       (lambda (translation &optional err)
+         (cond
+          (err (message "[Supersonic] Translating lyrics failed: %s" err))
+          ((not (equal track-id supersonic-lyrics--track-id)))
+          (t
+           (let* ((lines (plist-get lyrics :lines))
+                  (fixed (and translation
+                              (if (= (length translation) (length lines))
+                                  translation
+                                (supersonic--log "machine translation has %d lines for %d"
+                                                 (length translation) (length lines))
+                                nil)))
+                  (updated (append (if fixed
+                                       (list :translation fixed :translation-source "machine")
+                                     (list :translation-none t))
+                                   (supersonic-lyrics--without lyrics '(:translation :translation-source
+                                                                         :translation-none)))))
+             (puthash track-id updated supersonic-lyrics--cache)
+             (supersonic-lyrics--write-cache track-id updated)
+             (when (= generation supersonic-lyrics--generation)
+               (setq supersonic-lyrics--lyrics updated)
+               (supersonic-lyrics--refresh-views))
+             (when interactive
+               (message "[Supersonic] %s" (if fixed "Lyrics translated" "No translation needed"))))))))))))
+
+(defun supersonic-lyrics-translate ()
+  "Translate the lyrics playing now with `supersonic-lyrics-translate-function'."
+  (interactive)
+  (supersonic-lyrics--machine-translate t))
+
+;;;###autoload
+(defun supersonic-lyrics-toggle-translation ()
+  "Show or hide translations under the lyrics lines."
+  (interactive)
+  (setq supersonic-lyrics-show-translation (not supersonic-lyrics-show-translation))
+  (supersonic-lyrics--refresh-views)
+  (message "Lyrics translations %s" (if supersonic-lyrics-show-translation "shown" "hidden")))
+
+;;;###autoload
+(defun supersonic-lyrics-toggle-echo-area ()
+  "Show or stop showing the line being sung in the echo area.
+Turns on `supersonic-lyrics-follow-mode' if need be."
+  (interactive)
+  (setq supersonic-lyrics-echo-area (not supersonic-lyrics-echo-area))
+  (unless (or supersonic-lyrics-echo-area (not (equal (current-message) supersonic-lyrics--last-echo)))
+    (message nil))
+  (when (and supersonic-lyrics-echo-area (not supersonic-lyrics-follow-mode))
+    (supersonic-lyrics-follow-mode 1))
+  (message "Lyrics in the echo area %s" (if supersonic-lyrics-echo-area "on" "off")))
+
+(defun supersonic-lyrics--translation-text (index)
+  "Return the shown translation of lyrics line INDEX, or nil."
+  (and index supersonic-lyrics-show-translation
+       (let ((text (nth index (plist-get supersonic-lyrics--lyrics :translation))))
+         (and text (not (string-empty-p (string-trim text))) text))))
+
+;;;
+;;; Following playback
+;;;
 
 (defun supersonic-lyrics--position-ms ()
   "Return the extrapolated playback position in milliseconds, or nil."
@@ -416,9 +642,11 @@ cache."
                     (lyrics (aio-await (supersonic-lyrics-lookup track-id track refresh))))
                (when (= generation supersonic-lyrics--generation)
                  (setq supersonic-lyrics--track track
-                       supersonic-lyrics--lyrics lyrics
+                       supersonic-lyrics--lyrics (supersonic-lyrics--with-user-translation lyrics track)
                        supersonic-lyrics--status (if lyrics 'found 'none))
-                 (supersonic-lyrics--refresh-views))))))
+                 (supersonic-lyrics--refresh-views)
+                 (when (and supersonic-lyrics-auto-translate supersonic-lyrics-translate-function)
+                   (supersonic-lyrics--machine-translate nil)))))))
        (aio-await (supersonic-lyrics--resync)))
    (error
     (setq supersonic-lyrics--status 'none)
@@ -489,9 +717,12 @@ It never covers the minibuffer, nor a message of someone else's."
              (not (active-minibuffer-window))
              (let ((shown (current-message)))
                (or (not shown) (equal shown supersonic-lyrics--last-echo))))
-    (let ((message-log-max nil))
+    (let ((message-log-max nil)
+          (translation (supersonic-lyrics--translation-text supersonic-lyrics--index)))
       (setq supersonic-lyrics--last-echo
-            (message "%s" (propertize (concat "♪ " supersonic-lyrics-line) 'face 'supersonic-lyrics-current))))))
+            (message "%s" (concat (propertize (concat "♪ " supersonic-lyrics-line) 'face 'supersonic-lyrics-current)
+                                  (and translation
+                                       (concat "\n  " (propertize translation 'face 'supersonic-lyrics-translation)))))))))
 
 ;;;; Now playing
 
@@ -506,6 +737,9 @@ It never covers the minibuffer, nor a message of someone else's."
           (next (supersonic-lyrics--line-text (if supersonic-lyrics--index (1+ supersonic-lyrics--index) 0))))
       (concat (propertize (if (and current (not (string-empty-p current))) current "♪")
                           'face 'supersonic-lyrics-current)
+              (let ((translation (supersonic-lyrics--translation-text supersonic-lyrics--index)))
+                (and translation
+                     (concat "\n" (make-string 10 ?\s) (propertize translation 'face 'supersonic-lyrics-translation))))
               (and next (concat "\n" (make-string 10 ?\s) (propertize next 'face 'shadow))))))))
 
 (defun supersonic-lyrics-now-playing-render (_buff _song)
@@ -562,8 +796,13 @@ is non-nil."
                                 'face 'shadow)
                     "\n"))
           (when lyrics
-            (insert (propertize (format "%s · %s\n" (if (plist-get lyrics :synced) "synced" "not synced")
-                                        (or (plist-get lyrics :source) "?"))
+            (insert (propertize (format "%s · %s%s\n" (if (plist-get lyrics :synced) "synced" "not synced")
+                                        (or (plist-get lyrics :source) "?")
+                                        (cond ((plist-get lyrics :translation)
+                                               (format " · translation: %s%s"
+                                                       (plist-get lyrics :translation-source)
+                                                       (if supersonic-lyrics-show-translation "" " (hidden)")))
+                                              (t "")))
                                 'face 'shadow)))
           (insert "\n")
           (pcase supersonic-lyrics--status
@@ -573,12 +812,19 @@ is non-nil."
             (_
              (let ((index 0))
                (dolist (line (plist-get lyrics :lines))
-                 (insert (propertize (if (and (car line) (string-empty-p (cdr line))) "♪" (cdr line))
-                                     'supersonic-lyrics-index index
-                                     'supersonic-lyrics-ms (car line)
-                                     'mouse-face (and (car line) 'highlight)
-                                     'help-echo (and (car line) "mouse-1: play from this line"))
-                         "\n")
+                 (let ((translation (supersonic-lyrics--translation-text index))
+                       (properties (list 'supersonic-lyrics-index index
+                                         'supersonic-lyrics-ms (car line)
+                                         'mouse-face (and (car line) 'highlight)
+                                         'help-echo (and (car line) "mouse-1: play from this line"))))
+                   ;; Newlines included, so a line and its translation
+                   ;; make one stretch of the same index.
+                   (insert (apply #'propertize
+                                  (concat (if (and (car line) (string-empty-p (cdr line))) "♪" (cdr line)) "\n")
+                                  properties))
+                   (when translation
+                     (insert (apply #'propertize (concat "  " translation "\n")
+                                    'face 'supersonic-lyrics-translation properties))))
                  (setq index (1+ index))))))
           (setq supersonic-lyrics--follow t)
           (goto-char (point-min))
@@ -601,7 +847,7 @@ is non-nil."
               (progn
                 (delete-overlay supersonic-lyrics--current-overlay)
                 (delete-overlay supersonic-lyrics--past-overlay))
-            (let ((end (save-excursion (goto-char start) (line-end-position))))
+            (let ((end (1- (or (next-single-property-change start 'supersonic-lyrics-index) (point-max)))))
               (move-overlay supersonic-lyrics--current-overlay start end)
               (if (and first (< first start))
                   (move-overlay supersonic-lyrics--past-overlay first start)
@@ -683,6 +929,9 @@ is non-nil."
     (define-key map (kbd "(") #'supersonic-lyrics-later)
     (define-key map (kbd ")") #'supersonic-lyrics-earlier)
     (define-key map (kbd "g") #'supersonic-lyrics-refetch)
+    (define-key map (kbd "t") #'supersonic-lyrics-toggle-translation)
+    (define-key map (kbd "T") #'supersonic-lyrics-translate)
+    (define-key map (kbd "e") #'supersonic-lyrics-toggle-echo-area)
     map)
   "Keymap for `supersonic-lyrics-mode'.")
 

@@ -57,6 +57,8 @@
 
 (declare-function supersonic-lyrics "supersonic-lyrics")
 (declare-function supersonic-local-toggle "supersonic-local")
+(declare-function supersonic-lyrics-toggle-echo-area "supersonic-lyrics")
+(declare-function supersonic-lyrics-toggle-translation "supersonic-lyrics")
 
 (defcustom supersonic-now-playing-layout-functions
   (list #'supersonic-now-playing-layout-art
@@ -206,6 +208,8 @@ binds itself afterwards win."
     (define-key map (kbd "C") #'supersonic-clear-queue)
     (define-key map (kbd "l") #'supersonic-lyrics)
     (define-key map (kbd "O") #'supersonic-local-toggle)
+    (define-key map (kbd "t") #'supersonic-lyrics-toggle-echo-area)
+    (define-key map (kbd "T") #'supersonic-lyrics-toggle-translation)
     map)
   "Prefix keymap of supersonic's commands, for binding to a key of your own.
 For example:
@@ -2138,6 +2142,8 @@ provider is missing."
    ("Q" "Show queue" supersonic-show-queue)
    ("N" "Now playing" supersonic-show-now-playing)
    ("L" "Lyrics" supersonic-lyrics)
+   ("t" "Lyrics in echo area" supersonic-lyrics-toggle-echo-area)
+   ("T" "Lyrics translation" supersonic-lyrics-toggle-translation)
    ("SPC" "Toggle playing" supersonic-toggle-playing)
    ("f" "Skip track" supersonic-skip-track)
    ("b" "Previous track" supersonic-prev-track)

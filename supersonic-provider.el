@@ -115,7 +115,12 @@ promise.
   the provider has none.  LINES is a list of (MS . TEXT), MS being
   the time in milliseconds a line starts at when SYNCED is non-nil,
   and nil otherwise.  SOURCE is a short string naming where the
-  lyrics came from, for display.
+  lyrics came from, for display.  Optional keys: `:lang', the
+  language code of LINES if known; `:translation', a list of strings
+  (or nils) as long as LINES, each translating its line, with
+  `:translation-source' naming where it came from; and
+  `:alternatives', a list of lyrics plists of the same song in other
+  languages, for picking a translation from.
 - `cache-namespace' takes no arguments and returns a string naming
   the library this provider is connected to, such as a server
   address.  See `supersonic-provider-cache-name'.

@@ -285,7 +285,7 @@ Built locally, and carrying the same token-auth triple as
 (defun supersonic-subsonic--structured-lyrics (entry)
   "Turn ENTRY, one OpenSubsonic structuredLyrics object, into lyrics.
 A synced ENTRY's `offset' is applied to every line, LRC style: a
-positive offset makes lines show sooner."
+positive offset makes lines show sooner.  Its `lang' becomes `:lang'."
   (let ((synced (eq (assoc-default "synced" entry) t))
         (offset (or (assoc-default "offset" entry) 0)))
     (list :synced synced
@@ -293,15 +293,23 @@ positive offset makes lines show sooner."
                            (cons (and synced (max 0 (- (or (assoc-default "start" line) 0) offset)))
                                  (or (assoc-default "value" line) "")))
                          (assoc-default "line" entry))
+          :lang (assoc-default "lang" entry)
           :source "server")))
 
 (defun supersonic-subsonic--lyrics-from (data)
-  "Return the best lyrics in getLyricsBySongId DATA: synced over unsynced."
-  (let* ((entries (supersonic-recursive-assoc data '("subsonic-response" "lyricsList" "structuredLyrics")))
+  "Return the best lyrics in getLyricsBySongId DATA: synced over unsynced.
+The other entries, typically the same lyrics in other languages, come
+along as `:alternatives'."
+  (let* ((entries (seq-filter (lambda (e) (assoc-default "line" e))
+                              (supersonic-recursive-assoc data '("subsonic-response" "lyricsList" "structuredLyrics"))))
          (entry (or (seq-find (lambda (e) (eq (assoc-default "synced" e) t)) entries)
                     (car entries))))
-    (and entry (assoc-default "line" entry)
-         (supersonic-subsonic--structured-lyrics entry))))
+    (and entry
+         (let ((lyrics (supersonic-subsonic--structured-lyrics entry))
+               (others (mapcar #'supersonic-subsonic--structured-lyrics (remq entry entries))))
+           (if others
+               (append lyrics (list :alternatives others))
+             lyrics)))))
 
 (aio-defun
  supersonic-subsonic--lyrics (id)

@@ -8553,11 +8553,12 @@ applying [offset:] and dropping ID and enhanced word tags."
                    (("synced" . :json-false) ("line" (("value" . "plain"))))
                    (("synced" . t) ("offset" . 100)
                     ("line" (("start" . 1000) ("value" . "one")) (("start" . 50) ("value" . "zero"))))))))))
-    (should (equal '(:synced t :lines ((900 . "one") (0 . "zero")) :source "server")
+    (should (equal '(:synced t :lines ((900 . "one") (0 . "zero")) :lang nil :source "server"
+                     :alternatives ((:synced nil :lines ((nil . "plain")) :lang nil :source "server")))
                    (supersonic-subsonic--lyrics-from data))))
   (let ((data '(("subsonic-response"
                  ("lyricsList" ("structuredLyrics" (("synced" . :json-false) ("line" (("value" . "a"))))))))))
-    (should (equal '(:synced nil :lines ((nil . "a")) :source "server")
+    (should (equal '(:synced nil :lines ((nil . "a")) :lang nil :source "server")
                    (supersonic-subsonic--lyrics-from data))))
   (should-not (supersonic-subsonic--lyrics-from '(("subsonic-response" ("lyricsList"))))))
 
@@ -8721,6 +8722,94 @@ without album, then searches, are tried for synced lyrics first."
   (should (equal "Hey Jude" (supersonic-lyrics--clean-title "Hey Jude - Remastered 2015")))
   (should (equal "Numb" (supersonic-lyrics--clean-title "Numb [Live]")))
   (should (equal "Re-Run" (supersonic-lyrics--clean-title "Re-Run"))))
+
+(ert-deftest supersonic-tests-lyrics-lrc-duplicate-times-are-translations ()
+  "LRC lines given twice with one time tag read as line and translation."
+  (require 'supersonic-lyrics)
+  (let ((supersonic-lyrics-lrc-translations t))
+    (let ((lyrics (supersonic-lyrics-parse-lrc
+                   "[00:01.00]Ich seh dich\n[00:01.00]I see you\n[00:03.00]Fata Morgana\n[00:03.00]Mirage\n[00:05.00]Ende")))
+      (should (equal '((1000 . "Ich seh dich") (3000 . "Fata Morgana") (5000 . "Ende")) (plist-get lyrics :lines)))
+      (should (equal '("I see you" "Mirage" nil) (plist-get lyrics :translation)))
+      (should (equal "lrc" (plist-get lyrics :translation-source)))))
+  (let ((supersonic-lyrics-lrc-translations nil))
+    (should-not (plist-get (supersonic-lyrics-parse-lrc "[00:01.00]a\n[00:01.00]b") :translation)))
+  ;; One stray repeat among many lines is no translation.
+  (should-not (plist-get (supersonic-lyrics-parse-lrc "[00:01]a\n[00:01]b\n[00:02]c\n[00:03]d\n[00:04]e\n[00:05]f")
+                         :translation)))
+
+(ert-deftest supersonic-tests-lyrics-align-translation ()
+  "Synced lines align by time, plain ones by position, and mismatches not at all."
+  (require 'supersonic-lyrics)
+  (should (equal '("one" nil "three")
+                 (supersonic-lyrics-align-translation '((1000 . "a") (2000 . "b") (3000 . "c"))
+                                                      '((1100 . "one") (3300 . "three")))))
+  (should (equal '("x" "y") (supersonic-lyrics-align-translation '((nil . "a") (nil . "b")) '((nil . "x") (nil . "y")))))
+  (should-not (supersonic-lyrics-align-translation '((nil . "a")) '((nil . "x") (nil . "y")))))
+
+(ert-deftest supersonic-tests-lyrics-alternatives-become-translations ()
+  "An English alternative translates the lyrics; English lyrics with a
+synced original elsewhere swap places with it."
+  (require 'supersonic-lyrics)
+  (let ((supersonic-lyrics-translation-codes '("en" "eng"))
+        (deu '(:synced t :lines ((1000 . "Hallo")) :lang "deu" :source "server"))
+        (eng '(:synced t :lines ((1000 . "Hello")) :lang "eng" :source "server")))
+    (let ((lyrics (supersonic-lyrics--resolve-alternatives (append deu (list :alternatives (list eng))))))
+      (should (equal '((1000 . "Hallo")) (plist-get lyrics :lines)))
+      (should (equal '("Hello") (plist-get lyrics :translation)))
+      (should-not (plist-member lyrics :alternatives)))
+    (let ((lyrics (supersonic-lyrics--resolve-alternatives (append eng (list :alternatives (list deu))))))
+      (should (equal '((1000 . "Hallo")) (plist-get lyrics :lines)))
+      (should (equal '("Hello") (plist-get lyrics :translation))))))
+
+(ert-deftest supersonic-tests-lyrics-translation-of-your-own ()
+  "A .txt file in the translation directory translates line by line."
+  (require 'supersonic-lyrics)
+  (let* ((dir (make-temp-file "supersonic-tr" t))
+         (supersonic-lyrics-translation-directory dir)
+         (track '(:artist "Nina Chuba" :title "Fata Morgana"))
+         (lyrics '(:synced t :lines ((1000 . "Ich seh dich") (2000 . "") (3000 . "Fata Morgana")) :source "lrclib")))
+    (unwind-protect
+        (progn
+          (should (eq lyrics (supersonic-lyrics--with-user-translation lyrics track)))
+          (with-temp-file (expand-file-name "nina chuba - fata morgana.txt" dir)
+            (insert "I see you\n\nMirage\n"))
+          (let ((translated (supersonic-lyrics--with-user-translation lyrics track)))
+            (should (equal '("I see you" "" "Mirage") (plist-get translated :translation)))
+            (should (equal "your file" (plist-get translated :translation-source)))))
+      (delete-directory dir t))))
+
+(ert-deftest supersonic-tests-lyrics-machine-translation-is-cached ()
+  "A machine translation lands in the current lyrics and the cache; an
+answer of nil marks the lyrics as needing none, so it is not asked again."
+  (require 'supersonic-lyrics)
+  (let ((supersonic-lyrics--cache (make-hash-table :test #'equal))
+        (supersonic-lyrics--track-id "t1")
+        (supersonic-lyrics--track '(:title "x"))
+        (supersonic-lyrics--generation 1)
+        (supersonic-lyrics--lyrics '(:synced t :lines ((0 . "Hallo") (900 . "Welt"))))
+        (asked 0)
+        (answer '("Hello" "World")))
+    (cl-letf (((symbol-function 'supersonic-lyrics--write-cache) #'ignore)
+              ((symbol-function 'supersonic-lyrics--refresh-views) #'ignore))
+      (let ((supersonic-lyrics-translate-function
+             (lambda (_track lines language callback)
+               (when (= 0 asked)
+                 (should (equal '("Hallo" "Welt") lines)))
+               (cl-incf asked)
+               (should (equal "English" language))
+               (funcall callback answer)))
+            (supersonic-lyrics-translation-language "English"))
+        (supersonic-lyrics--machine-translate nil)
+        (should (equal '("Hello" "World") (plist-get supersonic-lyrics--lyrics :translation)))
+        (should (equal "machine" (plist-get (gethash "t1" supersonic-lyrics--cache) :translation-source)))
+        (supersonic-lyrics--machine-translate nil)
+        (should (= 1 asked))
+        (setq supersonic-lyrics--lyrics '(:synced t :lines ((0 . "Hello"))) answer nil)
+        (supersonic-lyrics--machine-translate nil)
+        (should (plist-get supersonic-lyrics--lyrics :translation-none))
+        (supersonic-lyrics--machine-translate nil)
+        (should (= 2 asked))))))
 
 (provide 'supersonic-tests)
 

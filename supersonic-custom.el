@@ -465,6 +465,60 @@ The lyrics buffer's ( and ) keys adjust it."
   :type 'integer
   :group 'supersonic-lyrics)
 
+(defcustom supersonic-lyrics-show-translation t
+  "Non-nil to show translations under the lyrics lines, when there are any.
+`supersonic-lyrics-toggle-translation' flips it."
+  :type 'boolean
+  :group 'supersonic-lyrics)
+
+(defcustom supersonic-lyrics-translation-language "English"
+  "Language translations are wanted in, by name, for machine translation."
+  :type 'string
+  :group 'supersonic-lyrics)
+
+(defcustom supersonic-lyrics-translation-codes '("en" "eng")
+  "Language codes of `supersonic-lyrics-translation-language', lowercase.
+Lyrics a provider has in one of these languages, besides the original,
+become the translation; an .lrc file named TRACK.CODE.lrc next to a
+local track does too."
+  :type '(repeat string)
+  :group 'supersonic-lyrics)
+
+(defcustom supersonic-lyrics-lrc-translations t
+  "Non-nil to read LRC lines given twice with one time tag as line and translation.
+The way most LRC files with translations carry them."
+  :type 'boolean
+  :group 'supersonic-lyrics)
+
+(defcustom supersonic-lyrics-translation-directory nil
+  "Directory with translations of your own, as \"ARTIST - TITLE.lrc\" or \".txt\".
+A .txt file has one line per lyrics line.  nil means the
+\"lyrics-translations\" directory in `supersonic-cache-path'."
+  :type '(choice (const :tag "In the cache directory" nil) directory)
+  :group 'supersonic-lyrics)
+
+(defcustom supersonic-lyrics-translate-function nil
+  "Function machine-translating lyrics, or nil for none.
+Called as (FUNCTION TRACK LINES LANGUAGE CALLBACK): TRACK is the track
+plist, LINES the lyrics lines as strings, LANGUAGE
+`supersonic-lyrics-translation-language'.  It must call CALLBACK once,
+with a list of as many translated strings, or nil if the lyrics are in
+LANGUAGE already -- or with nil and an error message as second argument
+if translating failed.  Results are cached with the lyrics."
+  :type '(choice (const :tag "None" nil) function)
+  :group 'supersonic-lyrics)
+
+(defcustom supersonic-lyrics-auto-translate nil
+  "Non-nil to machine-translate lyrics found with no translation, once per track.
+Needs `supersonic-lyrics-translate-function'."
+  :type 'boolean
+  :group 'supersonic-lyrics)
+
+(defface supersonic-lyrics-translation
+  '((t :inherit (shadow italic)))
+  "Face of the translation shown under a lyrics line."
+  :group 'supersonic-lyrics)
+
 (defface supersonic-lyrics-current
   '((t :inherit (bold highlight) :extend t))
   "Face of the synced lyrics line being sung."

@@ -563,15 +563,32 @@ NOW-PLAYING is non-nil when it has just started; that is when it counts."
         (lrc (seq-find (lambda (file) (string-equal (file-name-sans-extension (file-name-nondirectory file)) base))
                        (directory-files (file-name-directory id) t "\\.lrc\\'"))))
    (or (and lrc
-            (supersonic-lyrics-parse-lrc
-             (with-temp-buffer
-               (let ((coding-system-for-read 'utf-8))
-                 (insert-file-contents lrc))
-               (buffer-string))
-             "lrc file"))
+            (let ((lyrics (supersonic-local--read-lrc lrc "lrc file"))
+                  ;; TRACK.en.lrc and the like: a translation.
+                  (translations
+                   (delq nil (mapcar (lambda (code)
+                                       (let ((file (seq-find (lambda (f) (string-equal
+                                                                          (file-name-nondirectory f)
+                                                                          (concat base "." code ".lrc")))
+                                                             (directory-files (file-name-directory id) t "\\.lrc\\'"))))
+                                         (and file (append (list :lang code)
+                                                           (supersonic-local--read-lrc file "lrc file")))))
+                                     supersonic-lyrics-translation-codes))))
+              (if (and lyrics translations)
+                  (append lyrics (list :alternatives translations))
+                lyrics)))
        (progn
          (aio-await (supersonic-local--ensure-index))
          (supersonic-lyrics-parse-lrc (plist-get (gethash id supersonic-local--tracks) :lyrics-tag) "tags")))))
+
+(defun supersonic-local--read-lrc (file source)
+  "Return the lyrics in FILE, an .lrc or plain text file, from SOURCE."
+  (supersonic-lyrics-parse-lrc
+   (with-temp-buffer
+     (let ((coding-system-for-read 'utf-8))
+       (insert-file-contents file))
+     (buffer-string))
+   source))
 
 (defun supersonic-local--cache-namespace ()
   "Return the namespace of local ids, which are file names already."

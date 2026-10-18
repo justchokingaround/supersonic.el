@@ -545,6 +545,56 @@ you like, the echo area:
 For a mode line of your own, `supersonic-lyrics-line` holds the line
 being sung and `supersonic-lyrics-line-change-hook` runs as it changes.
 
+`supersonic-lyrics-toggle-echo-area` (`t` in the prefix map, `e` in the
+lyrics buffer) turns the echo-area lyrics on and off.
+
+#### Translations
+
+A translation into `supersonic-lyrics-translation-language` (English
+by default) is shown under each line, in the lyrics buffer, the echo
+area and now playing; `supersonic-lyrics-toggle-translation` (`T` in
+the prefix map, `t` in the lyrics buffer) hides and shows it.  It is
+taken from the first of:
+
+1. The lyrics themselves: an LRC file giving each line twice with one
+   time tag, the original first, as most translated LRC files do.
+2. The server's lyrics of the song in another language, such as an
+   `eng` entry besides the original from `getLyricsBySongId`; for
+   local files, an `.lrc` file named `TRACK.en.lrc` next to
+   `TRACK.lrc` (see `supersonic-lyrics-translation-codes`).
+3. A file of your own, `ARTIST - TITLE.lrc` or `.txt` (one line per
+   lyrics line), in `supersonic-lyrics-translation-directory`, by
+   default `lyrics-translations/` in `supersonic-cache-path`.
+4. A machine translation by `supersonic-lyrics-translate-function`,
+   asked for with `T` in the lyrics buffer, or for every track with
+   `supersonic-lyrics-auto-translate`.  Cached with the lyrics.
+
+With [gptel](https://github.com/karthink/gptel), for example:
+
+```elisp
+(defun my-supersonic-translate (track lines language callback)
+  (gptel-request
+      (format "Translate these lyrics of \"%s\" by %s into %s, line by line.
+Answer with exactly one line per input line, as N| translation, keeping
+empty lines empty.  If they are in %s already, answer only NONE.\n\n%s"
+              (plist-get track :title) (plist-get track :artist) language language
+              (string-join (seq-map-indexed (lambda (l i) (format "%d| %s" (1+ i) l)) lines) "\n"))
+    :callback
+    (lambda (response info)
+      (cond
+       ((not (stringp response)) (funcall callback nil (plist-get info :status)))
+       ((string-match-p "\\`[[:space:]]*NONE[[:space:]]*\\'" response) (funcall callback nil))
+       (t (let ((out (make-vector (length lines) "")))
+            (dolist (l (split-string response "\n"))
+              (when (string-match "\\`[[:space:]]*\\([0-9]+\\)|[[:space:]]?\\(.*\\)" l)
+                (let ((i (1- (string-to-number (match-string 1 l)))))
+                  (when (< -1 i (length lines)) (aset out i (match-string 2 l))))))
+            (funcall callback (append out nil))))))))
+
+(setq supersonic-lyrics-translate-function #'my-supersonic-translate
+      supersonic-lyrics-auto-translate t)   ; sends the lyrics to your LLM
+```
+
 ### Mode line
 
 `supersonic-mode-line-mode` shows the track playing in the mode line
