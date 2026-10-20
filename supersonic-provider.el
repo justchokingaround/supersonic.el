@@ -69,7 +69,7 @@
     podcasts podcast-episodes add-podcast download-podcast-episode
     stream-url scrobble cover-art cover-art-url lyrics
     playlists playlist-tracks create-playlist edit-playlist set-playlist-tracks delete-playlist
-    play-queue save-play-queue similar-tracks random-tracks
+    play-queue save-play-queue similar-tracks random-tracks star starred
     cache-namespace config-hints)
   "The library operations a provider can implement.
 All but `scrobble', `cache-namespace' and `config-hints' return a
@@ -147,6 +147,12 @@ promise.
   a COUNT, and resolves to at most COUNT tracks like it.
 - `random-tracks' takes a COUNT and an optional GENRE and resolves to
   at most COUNT tracks picked at random, of GENRE if given.
+- `star' takes an id, its KIND (`track', `album' or `artist') and a
+  FLAG, and resolves once the item is a favourite if FLAG is non-nil,
+  and no longer one otherwise.  Items carry `:starred', non-nil for a
+  favourite, where the provider knows.
+- `starred' takes no arguments and resolves to the favourites, as
+  (:tracks TRACKS :albums ALBUMS :artists ARTISTS).
 - `cache-namespace' takes no arguments and returns a string naming
   the library this provider is connected to, such as a server
   address.  See `supersonic-provider-cache-name'.
@@ -367,6 +373,16 @@ ID is a track's, an album's or an artist's."
  (aio-await (if genre
                 (supersonic-provider--call 'random-tracks count genre)
               (supersonic-provider--call 'random-tracks count))))
+
+(aio-defun
+ supersonic-provider-star (id kind flag)
+ "Return a promise resolving once ID, a KIND, is a favourite if FLAG, else not."
+ (aio-await (supersonic-provider--call 'star id kind flag)))
+
+(aio-defun
+ supersonic-provider-starred ()
+ "Return a promise resolving to the favourites: (:tracks :albums :artists)."
+ (aio-await (supersonic-provider--call 'starred)))
 
 (defun supersonic-provider-cache-name (id)
   "Return a file name for ID that is safe, bounded and unique to the library.

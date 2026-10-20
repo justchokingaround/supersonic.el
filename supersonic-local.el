@@ -436,8 +436,10 @@ once per session."
   "Return ITEM, a track, album or artist plist, without the index's own keys.
 A track gets the ids of its album and album artist added."
   (let ((public (cl-loop for (key value) on item by #'cddr
-                         unless (memq key '(:tracks :albums :spellings :lyrics-tag :mtime))
+                         unless (memq key '(:tracks :albums :spellings :lyrics-tag :mtime :starred))
                          append (list key value))))
+    (when (gethash (plist-get item :id) (supersonic-local--favourites))
+      (setq public (append public (list :starred t))))
     (if (and (plist-get item :title) (string-prefix-p "/" (or (plist-get item :id) "")))
         (append public (list :album-id (supersonic-local--album-key item)
                              :artist-id (supersonic-local--artist-key (plist-get item :album-artist))))
@@ -781,6 +783,39 @@ NOW-PLAYING is non-nil when it has just started; that is when it counts."
                                 (hash-table-values supersonic-local--tracks)))
                    count)))
 
+;;;; Favourites
+
+(defvar supersonic-local--favourites nil "Hash table of favourite ids, or nil until read.")
+
+(defun supersonic-local--favourites-file ()
+  "Return the file local favourites are kept in."
+  (expand-file-name "local-favourites.eld" supersonic-cache-path))
+
+(defun supersonic-local--favourites ()
+  "Return the table of favourite ids, reading it if need be."
+  (or supersonic-local--favourites
+      (let ((table (make-hash-table :test #'equal)))
+        (dolist (id (supersonic-local--read-file (supersonic-local--favourites-file)))
+          (puthash id t table))
+        (setq supersonic-local--favourites table))))
+
+(aio-defun
+ supersonic-local--star (id _kind flag) "Make local ID a favourite if FLAG, else not."
+ (let ((table (supersonic-local--favourites)))
+   (if flag (puthash id t table) (remhash id table))
+   (supersonic-local--write-file (supersonic-local--favourites-file) (hash-table-keys table)))
+ nil)
+
+(aio-defun
+ supersonic-local--starred () "Resolve to the local favourites."
+ (aio-await (supersonic-local--ensure-index))
+ (let ((table (supersonic-local--favourites)))
+   (cl-flet ((pick (items) (mapcar #'supersonic-local--public
+                                   (seq-filter (lambda (item) (gethash (plist-get item :id) table)) items))))
+     (list :tracks (pick (hash-table-values supersonic-local--tracks))
+           :albums (pick (hash-table-values supersonic-local--albums))
+           :artists (pick (hash-table-values supersonic-local--artists))))))
+
 (defun supersonic-local--cache-namespace ()
   "Return the namespace of local ids, which are file names already."
   "local")
@@ -812,6 +847,8 @@ NOW-PLAYING is non-nil when it has just started; that is when it counts."
    (save-play-queue . supersonic-local--save-play-queue)
    (similar-tracks . supersonic-local--similar-tracks)
    (random-tracks . supersonic-local--random-tracks)
+   (star . supersonic-local--star)
+   (starred . supersonic-local--starred)
    (cache-namespace . supersonic-local--cache-namespace)
    (config-hints . supersonic-local--config-hints)))
 

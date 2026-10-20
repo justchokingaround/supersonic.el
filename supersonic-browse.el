@@ -439,8 +439,9 @@ An album over several discs gets a heading per disc."
                                           (plist-get track :artist))
                                      (and show-album (plist-get track :album))))
                      " · "))
-            (title (propertize (or (plist-get track :title) "?")
-                               'face (if playing 'supersonic-browse-playing 'supersonic-browse-track)))
+            (title (concat (propertize (or (plist-get track :title) "?")
+                                       'face (if playing 'supersonic-browse-playing 'supersonic-browse-track))
+                           (and (plist-get track :starred) (propertize "  ♥" 'face 'supersonic-browse-accent))))
             (detail (and (not (string-empty-p detail)) (propertize (concat "   " detail) 'face 'shadow)))
             (shown (supersonic-browse--fit (concat title detail) (- duration-x title-x (* 2 char))))
             (properties (supersonic-browse--item-properties
@@ -601,6 +602,7 @@ of its own, so they take focus like any other."
     ('artist (or (plist-get (plist-get page :item) :name) "Artist"))
     ('album (or (plist-get (plist-get page :item) :name) "Album"))
     ('playlists "Playlists")
+    ('starred "Favourites")
     ('playlist (or (plist-get (plist-get page :item) :name) "Playlist"))
     ('search (format "“%s”" (plist-get page :query)))
     (_ "?")))
@@ -638,6 +640,7 @@ of its own, so they take focus like any other."
                               (and (eq (car outcome) :success) (cdr outcome)))))))
    ('artists (list :artists (aio-await (supersonic-provider-artists))))
    ('playlists (list :playlists (aio-await (supersonic-provider-playlists))))
+   ('starred (list :starred (aio-await (supersonic-provider-starred))))
    ('playlist (list :tracks (aio-await (supersonic-provider-playlist-tracks (plist-get page :id)))))
    ('albums (list :albums (aio-await (supersonic-provider-album-list (plist-get page :type) supersonic-album-list-count))))
    ('artist (list :albums (aio-await (supersonic-provider-artist-albums (plist-get page :id)))))
@@ -698,6 +701,7 @@ of its own, so they take focus like any other."
   (dolist (button `(("▶ Surprise me" . supersonic-browse-surprise)
                     ("Artists" . supersonic-browse-artists)
                     ("Playlists" . supersonic-browse-playlists)
+                    ("♥ Favourites" . supersonic-browse-favourites)
                     ("Search" . supersonic-browse-search)))
     (insert (apply #'propertize (concat " " (car button) " ")
                    'face 'supersonic-browse-button
@@ -748,7 +752,7 @@ of its own, so they take focus like any other."
               (songs (apply #'+ (mapcar (lambda (a) (or (plist-get a :song-count) 0)) albums))))
          (supersonic-browse--hero
           (if (plist-get item :art) item (append (list :art (plist-get (car albums) :art)) item))
-          'circle "Artist" (or (plist-get item :name) "")
+          'circle (if (plist-get item :starred) "Artist · ♥ favourite" "Artist") (or (plist-get item :name) "")
           (supersonic-browse--plural (length albums) "album")
           (and (> songs 0) (supersonic-browse--plural songs "song")))
          (supersonic-browse--heading "Albums")
@@ -762,7 +766,8 @@ of its own, so they take focus like any other."
               (total (apply #'+ (mapcar (lambda (track) (or (plist-get track :duration) 0)) tracks))))
          (supersonic-browse--hero
           (if (plist-get item :art) item (append (list :art (plist-get first :art)) item))
-          'square "Album" (or (plist-get item :name) (plist-get first :album) "")
+          'square (if (plist-get item :starred) "Album · ♥ favourite" "Album")
+          (or (plist-get item :name) (plist-get first :album) "")
           artist
           (string-join (delq nil (list (and year (number-to-string year))
                                        (supersonic-browse--plural (length tracks) "song")
@@ -770,6 +775,25 @@ of its own, so they take focus like any other."
                        " · "))
          (insert (propertize "\n" 'line-height 1.4))
          (supersonic-browse--insert-tracks tracks)))
+      ('starred
+       (let* ((starred (plist-get content :starred))
+              (tracks (plist-get starred :tracks)))
+         (supersonic-browse--title "Favourites")
+         (unless (or tracks (plist-get starred :albums) (plist-get starred :artists))
+           (insert "\n" (supersonic-browse--space supersonic-browse-margin)
+                   (propertize (substitute-command-keys
+                                "None yet: \\<supersonic-browse-mode-map>\\[supersonic-browse-star] on a song, album or artist hearts it.")
+                               'face 'shadow)
+                   "\n"))
+         (when tracks
+           (supersonic-browse--heading "Songs")
+           (supersonic-browse--insert-tracks tracks t))
+         (when (plist-get starred :albums)
+           (supersonic-browse--heading "Albums")
+           (supersonic-browse--insert-grid 'album (plist-get starred :albums) 'square))
+         (when (plist-get starred :artists)
+           (supersonic-browse--heading "Artists")
+           (supersonic-browse--insert-grid 'artist (plist-get starred :artists) 'circle))))
       ('playlists
        (let ((playlists (plist-get content :playlists)))
          (supersonic-browse--title "Playlists" (supersonic-browse--plural (length playlists) "playlist"))
@@ -1437,6 +1461,29 @@ TYPE is one of `supersonic-provider-album-list-types'."
 
 (declare-function supersonic-radio "supersonic-radio")
 
+(defun supersonic-browse-star ()
+  "Heart the song, album or artist in focus, or take the heart away."
+  (interactive)
+  (supersonic-provider-require 'star)
+  (pcase-let* ((`(,kind . ,item) (supersonic-browse--target))
+               (kind (pcase kind ((or 'track 'album 'artist) kind) (_ (user-error "Heart a song, an album or an artist"))))
+               (flag (not (plist-get item :starred))))
+    (aio-wait-for (supersonic-provider-star (plist-get item :id) kind flag))
+    ;; The page's own item, as the header shows it.
+    (when (equal (plist-get item :id) (plist-get supersonic-browse--page :id))
+      (setq supersonic-browse--page
+            (plist-put supersonic-browse--page :item
+                       (plist-put (copy-sequence (plist-get supersonic-browse--page :item)) :starred flag))))
+    (message (if flag "♥ %s is a favourite" "%s is no longer a favourite")
+             (or (plist-get item :name) (plist-get item :title) "It"))
+    (supersonic-browse-reload)))
+
+;;;###autoload
+(defun supersonic-browse-favourites ()
+  "Show the favourite songs, albums and artists in the browser."
+  (interactive)
+  (supersonic-browse-visit '(:kind starred)))
+
 (defun supersonic-browse-radio ()
   "Start a radio from the item in focus: it, then what is like it."
   (interactive)
@@ -1649,7 +1696,8 @@ TYPE is one of `supersonic-provider-album-list-types'."
      ("shuffle" supersonic-browse-shuffle)
      ("add to the queue" supersonic-browse-enqueue)
      ("add to a playlist" supersonic-browse-add-to-playlist)
-     ("radio: it, then more like it" supersonic-browse-radio))
+     ("radio: it, then more like it" supersonic-browse-radio)
+     ("favourite (♥) or not" supersonic-browse-star))
     ("Pages" browser
      ("back / forward" supersonic-browse-back supersonic-browse-forward)
      ("home" supersonic-browse-home)
@@ -1664,6 +1712,7 @@ TYPE is one of `supersonic-provider-album-list-types'."
      ("go to the artist" supersonic-player-goto-artist)
      ("go to the album" supersonic-player-goto-album)
      ("radio from this song" supersonic-radio)
+     ("favourite (♥) or not" supersonic-player-star)
      ("back to the library" supersonic-player-library)
      ("reload" supersonic-player-refresh))
     ("From anywhere" prefix
@@ -1672,6 +1721,7 @@ TYPE is one of `supersonic-provider-album-list-types'."
      ("search" (:or supersonic-browse-search supersonic-search-read))
      ("artists" supersonic-browse-artists)
      ("playlists" supersonic-browse-playlists)
+     ("favourites" supersonic-browse-favourites)
      ("play queue" supersonic-show-queue)
      ("save the queue as a playlist" supersonic-save-queue-as-playlist)
      ("lyrics" supersonic-lyrics)
@@ -1891,6 +1941,7 @@ The keys are read off the keymaps, so they are the ones bound."
     (define-key map (kbd "h") #'supersonic-browse-home)
     (define-key map (kbd "A") #'supersonic-browse-add-to-playlist)
     (define-key map (kbd "x") #'supersonic-browse-radio)
+    (define-key map (kbd "*") #'supersonic-browse-star)
     (define-key map (kbd "d") #'supersonic-browse-playlist-remove)
     (define-key map (kbd "M-p") #'supersonic-browse-playlist-move-up)
     (define-key map (kbd "M-n") #'supersonic-browse-playlist-move-down)

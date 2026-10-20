@@ -9222,6 +9222,36 @@ random ones, leaving out what is queued already."
          (aio-wait-for (supersonic-radio--extend))
          (should (equal '("c" "d") enqueued)))))))
 
+(ert-deftest supersonic-tests-subsonic-star-by-kind ()
+  "Starring passes the id under the parameter its kind needs."
+  (let ((urls nil))
+    (cl-letf (((symbol-function 'supersonic-build-url) (lambda (endpoint query) (cons endpoint query)))
+              ((symbol-function 'supersonic-get-json) (aio-lambda (url) (push url urls) nil)))
+      (aio-wait-for (supersonic-subsonic--star "t1" 'track t))
+      (aio-wait-for (supersonic-subsonic--star "a1" 'album t))
+      (aio-wait-for (supersonic-subsonic--star "r1" 'artist nil)))
+    (should (equal '(("/star.view" ("id" . "t1")) ("/star.view" ("albumId" . "a1")) ("/unstar.view" ("artistId" . "r1")))
+                   (nreverse urls)))))
+
+(ert-deftest supersonic-tests-local-favourites ()
+  "Local favourites are kept, listed by kind, and marked on the items."
+  (require 'supersonic-local)
+  (let* ((supersonic-cache-path (make-temp-file "supersonic-fav" t))
+         (supersonic-local--favourites nil))
+    (unwind-protect
+        (supersonic-tests--with-local-index
+            (list '(:id "/m/a.flac" :title "A" :album-artist "X" :album "Y"))
+          (cl-letf (((symbol-function 'supersonic-local--ensure-index) (aio-lambda () nil)))
+            (aio-wait-for (supersonic-local--star "/m/a.flac" 'track t))
+            (setq supersonic-local--favourites nil) ; read back from disk
+            (let ((starred (aio-wait-for (supersonic-local--starred))))
+              (should (equal '("A") (mapcar (lambda (x) (plist-get x :title)) (plist-get starred :tracks))))
+              (should (plist-get (car (plist-get starred :tracks)) :starred))
+              (should-not (plist-get starred :albums)))
+            (aio-wait-for (supersonic-local--star "/m/a.flac" 'track nil))
+            (should-not (plist-get (aio-wait-for (supersonic-local--starred)) :tracks))))
+      (delete-directory supersonic-cache-path t))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here

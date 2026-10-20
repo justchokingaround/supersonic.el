@@ -94,6 +94,8 @@ Drawn on a 24 unit grid, scaled."
         ('prev (path "M19 5 L9 12 L19 19 Z" t) (bar 5 5 3 14))
         ('shuffle (path "M3 7 H6 C11 7 13 17 18 17 H21 M3 17 H6 C11 17 13 7 18 7 H21 M18 4 L21 7 L18 10 M18 14 L21 17 L18 20"))
         ('repeat (path "M4 11 V9 A3 3 0 0 1 7 6 H20 M17 3 L20 6 L17 9 M20 13 V15 A3 3 0 0 1 17 18 H4 M7 21 L4 18 L7 15"))
+        ('heart (path "M12 20 C12 20 3.5 14.5 3.5 8.8 A4.3 4.3 0 0 1 12 6.6 A4.3 4.3 0 0 1 20.5 8.8 C20.5 14.5 12 20 12 20 Z"))
+        ('heart-full (path "M12 20 C12 20 3.5 14.5 3.5 8.8 A4.3 4.3 0 0 1 12 6.6 A4.3 4.3 0 0 1 20.5 8.8 C20.5 14.5 12 20 12 20 Z" t))
         ('minus (path "M5 12 H19"))
         ('plus (path "M5 12 H19 M12 5 V19"))))
     group))
@@ -110,7 +112,8 @@ the accent colour itself; the big play/pause gets a halo instead."
          (accent (supersonic-browse--accent))
          (active (pcase name
                    ('shuffle (plist-get state :shuffle))
-                   ('repeat (plist-get state :repeat))))
+                   ('repeat (plist-get state :repeat))
+                   ('like (plist-get (plist-get state :track) :starred))))
          (ink (cond (big (supersonic-browse--bg))
                     ((or on active) accent)
                     (t (supersonic-browse--fg)))))
@@ -125,11 +128,12 @@ the accent colour itself; the big play/pause gets a halo instead."
       (dom-append-child svg (dom-node 'circle `((cx . ,r) (cy . ,r) (r . ,(- r 9)) (fill . ,accent)))))
     (let ((icon (pcase name
                   ('toggle (if (plist-get state :paused) 'play 'pause))
+                  ('like (if active 'heart-full 'heart))
                   (_ name)))
           (glyph (cond (big 30) (on 26) (t 24))))
       (dom-append-child svg (supersonic-player--icon icon (- r (/ glyph 2.0) (if (and big (plist-get state :paused)) -1 0))
                                                      (- r (/ glyph 2.0)) glyph ink)))
-    (when active
+    (when (and active (not (eq name 'like)))
       (dom-append-child svg (dom-node 'circle `((cx . ,r) (cy . ,(- size 7)) (r . 2.5) (fill . ,accent)))))
     (when (and (eq name 'repeat) (eq (plist-get state :repeat) 'track))
       (dom-append-child svg (dom-node 'text `((x . ,r) (y . ,(+ r 4)) (text-anchor . "middle")
@@ -255,7 +259,8 @@ the accent colour itself; the big play/pause gets a halo instead."
     ('shuffle #'supersonic-player-shuffle)
     ('repeat #'supersonic-player-repeat)
     ('minus #'supersonic-player-volume-down)
-    ('plus #'supersonic-player-volume-up)))
+    ('plus #'supersonic-player-volume-up)
+    ('like #'supersonic-player-star)))
 
 (defun supersonic-player--volume-image ()
   "Return the display spec of the volume level."
@@ -444,7 +449,7 @@ the accent colour itself; the big play/pause gets a halo instead."
       (when graphic
         (supersonic-player--insert-progress))
       (insert (propertize "\n" 'line-height 0.4))
-      (supersonic-player--insert-controls '(shuffle prev toggle next repeat))
+      (supersonic-player--insert-controls '(like shuffle prev toggle next repeat))
       (supersonic-player--insert-volume)
       (insert (propertize "\n" 'line-height 0.8))
       (supersonic-player--insert-lyrics)
@@ -676,6 +681,18 @@ the accent colour itself; the big play/pause gets a halo instead."
                                                :artist (plist-get track :artist) :year (plist-get track :year)
                                                :art (plist-get track :art))))))
 
+(defun supersonic-player-star ()
+  "Heart the track playing, or take the heart away."
+  (interactive)
+  (supersonic-provider-require 'star)
+  (let* ((track (supersonic-player--track))
+         (flag (not (plist-get track :starred))))
+    (aio-wait-for (supersonic-provider-star (plist-get track :id) 'track flag))
+    (setq supersonic-player--state
+          (plist-put supersonic-player--state :track (plist-put (copy-sequence track) :starred flag)))
+    (supersonic-player--render)
+    (message (if flag "♥ %s is a favourite" "%s is no longer a favourite") (or (plist-get track :title) "It"))))
+
 (defun supersonic-player-library ()
   "Go to the library browser."
   (interactive)
@@ -697,6 +714,7 @@ the accent colour itself; the big play/pause gets a halo instead."
     (define-key map (kbd "=") #'supersonic-player-volume-up)
     (define-key map (kbd "-") #'supersonic-player-volume-down)
     (define-key map (kbd "x") #'supersonic-radio)
+    (define-key map (kbd "*") #'supersonic-player-star)
     (define-key map (kbd "a") #'supersonic-player-goto-artist)
     (define-key map (kbd "o") #'supersonic-player-goto-album)
     (define-key map (kbd "DEL") #'supersonic-player-library)

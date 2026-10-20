@@ -65,14 +65,15 @@ DATA's \"id\" as a string."
 
 (defun supersonic-subsonic--artist (data)
   "Turn a Subsonic artist alist DATA into a facade artist plist."
-  (supersonic-subsonic--plist data '((:name . "name") (:art . "coverArt") (:album-count . "albumCount"))))
+  (supersonic-subsonic--plist data '((:name . "name") (:art . "coverArt") (:album-count . "albumCount")
+                                     (:starred . "starred"))))
 
 (defun supersonic-subsonic--album (data)
   "Turn a Subsonic album alist DATA into a facade album plist."
   (supersonic-subsonic--plist
    data '((:name . "name") (:artist . "artist") (:year . "year") (:art . "coverArt")
           (:artist-id . "artistId") (:song-count . "songCount") (:duration . "duration")
-          (:genre . "genre"))))
+          (:genre . "genre") (:starred . "starred"))))
 
 (defun supersonic-subsonic--track (data)
   "Turn a Subsonic song/child alist DATA into a facade track plist.
@@ -93,7 +94,8 @@ as `:genre', for a now-playing row of the user's own to read."
      (:year . "year")
      (:disc . "discNumber")
      (:album-id . "albumId")
-     (:artist-id . "artistId"))))
+     (:artist-id . "artistId")
+     (:starred . "starred"))))
 
 (defun supersonic-subsonic--playlist (data)
   "Turn a Subsonic playlist alist DATA into a facade playlist plist."
@@ -520,6 +522,23 @@ external agents, such as Last.fm, which may know nothing."
                                                                         (and genre `(("genre" . ,genre)))))))
           '("subsonic-response" "randomSongs" "song"))))
 
+(aio-defun
+ supersonic-subsonic--star (id kind flag)
+ "Make ID, a KIND, a favourite if FLAG, else not, via star or unstar."
+ (aio-await (supersonic-get-json
+             (supersonic-build-url (if flag "/star.view" "/unstar.view")
+                                   (list (cons (pcase kind ('album "albumId") ('artist "artistId") (_ "id")) id)))))
+ nil)
+
+(aio-defun
+ supersonic-subsonic--starred () "Return a promise resolving to the favourites, via getStarred2."
+ (let ((starred (supersonic-recursive-assoc
+                 (aio-await (supersonic-get-json (supersonic-build-url "/getStarred2.view" nil)))
+                 '("subsonic-response" "starred2"))))
+   (list :tracks (mapcar #'supersonic-subsonic--track (assoc-default "song" starred))
+         :albums (mapcar #'supersonic-subsonic--album (assoc-default "album" starred))
+         :artists (mapcar #'supersonic-subsonic--artist (assoc-default "artist" starred)))))
+
 (defun supersonic-subsonic--cache-namespace ()
   "Return the Subsonic server's address, `supersonic-host'.
 Ids are only unique per server, so this is what keeps one server's
@@ -559,6 +578,8 @@ cached art and waveforms apart from another's."
    (save-play-queue . supersonic-subsonic--save-play-queue)
    (similar-tracks . supersonic-subsonic--similar-tracks)
    (random-tracks . supersonic-subsonic--random-tracks)
+   (star . supersonic-subsonic--star)
+   (starred . supersonic-subsonic--starred)
    (cache-namespace . supersonic-subsonic--cache-namespace)
    (config-hints . supersonic-subsonic--config-hints)))
 
