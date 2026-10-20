@@ -91,6 +91,8 @@
   "Overlay on the name under the tile in focus.")
 (defvar-local supersonic-browse--bar-overlay nil
   "Overlay drawing the accent bar of the track row in focus.")
+(defvar-local supersonic-browse--restore-row nil
+  "Position of the track row to focus once the page is laid out again.")
 (defvar supersonic-browse-mode-map)
 
 ;;;
@@ -376,6 +378,7 @@ of the artist's name over and over."
                                  (and (plist-get item :year) (number-to-string (plist-get item :year)))))
                  " · "))
    ((plist-get item :year) (number-to-string (plist-get item :year)))
+   ((plist-get item :song-count) (supersonic-browse--plural (plist-get item :song-count) "song"))
    (t "")))
 
 (defun supersonic-browse--row-strut ()
@@ -415,7 +418,9 @@ An album over several discs gets a heading per disc."
          (marker-x supersonic-browse-margin)
          (number-right (+ supersonic-browse-margin (* 5 char)))
          (title-x (+ number-right (* 2 char)))
-         (numbers (supersonic-browse--numbering tracks))
+         (numbers (if show-album
+                      (number-sequence 1 (length tracks))
+                    (supersonic-browse--numbering tracks)))
          (discs (delete-dups (mapcar (lambda (track) (or (plist-get track :disc) 1)) tracks)))
          (album-artist (and (not show-album) (plist-get (car tracks) :artist)))
          (strut (supersonic-browse--row-strut))
@@ -599,6 +604,8 @@ of its own, so they take focus like any other."
     ('albums (supersonic-browse--list-title (plist-get page :type)))
     ('artist (or (plist-get (plist-get page :item) :name) "Artist"))
     ('album (or (plist-get (plist-get page :item) :name) "Album"))
+    ('playlists "Playlists")
+    ('playlist (or (plist-get (plist-get page :item) :name) "Playlist"))
     ('search (format "“%s”" (plist-get page :query)))
     (_ "?")))
 
@@ -629,8 +636,13 @@ of its own, so they take focus like any other."
         (let ((outcome (aio-await (cdr pending))))
           (when (and (eq (car outcome) :success) (cdr outcome))
             (push (cons (car pending) (cdr outcome)) sections))))
-      (list :sections (nreverse sections))))
+      (list :sections (nreverse sections)
+            :playlists (and (supersonic-provider-supports-p 'playlists)
+                            (let ((outcome (aio-await (aio-catch (supersonic-provider-playlists)))))
+                              (and (eq (car outcome) :success) (cdr outcome)))))))
    ('artists (list :artists (aio-await (supersonic-provider-artists))))
+   ('playlists (list :playlists (aio-await (supersonic-provider-playlists))))
+   ('playlist (list :tracks (aio-await (supersonic-provider-playlist-tracks (plist-get page :id)))))
    ('albums (list :albums (aio-await (supersonic-provider-album-list (plist-get page :type) supersonic-album-list-count))))
    ('artist (list :albums (aio-await (supersonic-provider-artist-albums (plist-get page :id)))))
    ('album (list :tracks (aio-await (supersonic-provider-album-tracks (plist-get page :id)))))
@@ -669,6 +681,7 @@ of its own, so they take focus like any other."
        (if key (concat (key-description key) " " (cdr pair)) "")))
    '((supersonic-browse-open . "open") (supersonic-browse-play . "play")
      (supersonic-browse-shuffle . "shuffle") (supersonic-browse-enqueue . "queue")
+     (supersonic-browse-add-to-playlist . "playlist")
      (supersonic-browse-next-section . "section") (supersonic-browse-back . "back")
      (supersonic-browse-search . "search") (describe-mode . "keys"))
    "   "))
@@ -688,6 +701,7 @@ of its own, so they take focus like any other."
   (supersonic-browse--new-region)
   (dolist (button `(("▶ Surprise me" . supersonic-browse-surprise)
                     ("Artists" . supersonic-browse-artists)
+                    ("Playlists" . supersonic-browse-playlists)
                     ("Search" . supersonic-browse-search)))
     (insert (apply #'propertize (concat " " (car button) " ")
                    'face 'supersonic-browse-button
@@ -696,15 +710,25 @@ of its own, so they take focus like any other."
                                                        'supersonic-browse-region supersonic-browse--region))
             "  "))
   (insert "\n")
-  (let ((sections (plist-get content :sections)))
-    (if (not sections)
+  (let ((sections (plist-get content :sections))
+        (playlists (plist-get content :playlists))
+        (first t))
+    (if (not (or sections playlists))
         (insert "\n" (supersonic-browse--space supersonic-browse-margin)
                 (propertize "Nothing here yet -- try Artists or Search." 'face 'shadow) "\n")
       (dolist (section sections)
         (let ((type (car (car section))))
           (supersonic-browse--heading (cdr (car section)) "See all"
                                       (lambda () (supersonic-browse-album-list type)))
-          (supersonic-browse--insert-grid 'album (cdr section) 'square 1))))))
+          (supersonic-browse--insert-grid 'album (cdr section) 'square 1))
+        ;; Playlists second, right after jumping back in.
+        (when (and first playlists)
+          (supersonic-browse--heading "Your playlists" "See all" #'supersonic-browse-playlists)
+          (supersonic-browse--insert-grid 'playlist playlists 'square 1))
+        (setq first nil))
+      (when (and playlists (not sections))
+        (supersonic-browse--heading "Your playlists" "See all" #'supersonic-browse-playlists)
+        (supersonic-browse--insert-grid 'playlist playlists 'square 1)))))
 
 (defun supersonic-browse--render-page (content)
   "Insert the body of the current page from CONTENT."
@@ -750,6 +774,32 @@ of its own, so they take focus like any other."
                        " · "))
          (insert (propertize "\n" 'line-height 1.4))
          (supersonic-browse--insert-tracks tracks)))
+      ('playlists
+       (let ((playlists (plist-get content :playlists)))
+         (supersonic-browse--title "Playlists" (supersonic-browse--plural (length playlists) "playlist"))
+         (insert "\n")
+         (if playlists
+             (supersonic-browse--insert-grid 'playlist playlists 'square)
+           (insert (supersonic-browse--space supersonic-browse-margin)
+                   (propertize (substitute-command-keys
+                                "None yet: \\<supersonic-browse-mode-map>\\[supersonic-browse-add-to-playlist] on a song, album or artist starts one.")
+                               'face 'shadow)
+                   "\n"))))
+      ('playlist
+       (let* ((tracks (plist-get content :tracks))
+              (item (plist-get page :item))
+              (total (apply #'+ (mapcar (lambda (track) (or (plist-get track :duration) 0)) tracks))))
+         (supersonic-browse--hero
+          (if (plist-get item :art) item (append (list :art (plist-get (car tracks) :art)) item))
+          'square "Playlist" (or (plist-get item :name) "")
+          (plist-get item :owner)
+          (string-join (list (supersonic-browse--plural (length tracks) "song") (supersonic-browse--total total))
+                       " · "))
+         (insert (propertize "\n" 'line-height 1.4))
+         (if tracks
+             (supersonic-browse--insert-tracks tracks t)
+           (insert (supersonic-browse--space supersonic-browse-margin)
+                   (propertize "Empty for now." 'face 'shadow) "\n"))))
       ('search
        (let ((results (plist-get content :results)))
          (supersonic-browse--title (format "“%s”" (plist-get page :query)))
@@ -797,6 +847,13 @@ window's frame draws it, and loads finish in process callbacks."
       (supersonic-browse--render-page supersonic-browse--content))
     (insert "\n")
     (supersonic-browse--index-stops)
+    (when supersonic-browse--restore-row
+      (let ((row supersonic-browse--restore-row))
+        (setq supersonic-browse--restore-row nil)
+        (dotimes (i (supersonic-browse--stop-count))
+          (when (and (eq (car-safe (supersonic-browse--prop i 'supersonic-browse-key)) 'track)
+                     (eql (supersonic-browse--prop i 'supersonic-browse-index) row))
+            (setq selected (supersonic-browse--prop i 'supersonic-browse-key))))))
     (goto-char (let ((i (or (supersonic-browse--key-index selected) 0)))
                  (if (< i (supersonic-browse--stop-count)) (aref supersonic-browse--stops i) (point-min))))
     (when (get-buffer-window (current-buffer))
@@ -1341,6 +1398,10 @@ TYPE is one of `supersonic-provider-album-list-types'."
       (dolist (promise promises)
         (setq ids (append ids (mapcar (lambda (track) (plist-get track :id)) (aio-await promise)))))
       ids))
+   ('playlist (mapcar (lambda (track) (plist-get track :id))
+                      (if (equal (plist-get item :id) (plist-get supersonic-browse--page :id))
+                          (plist-get supersonic-browse--content :tracks)
+                        (aio-await (supersonic-provider-playlist-tracks (plist-get item :id))))))
    ('track (list (plist-get item :id)))))
 
 (defun supersonic-browse--shuffled (list)
@@ -1391,6 +1452,7 @@ TYPE is one of `supersonic-provider-album-list-types'."
     (pcase (car-safe key)
       ('artist (supersonic-browse-visit (list :kind 'artist :id (plist-get item :id) :item item)))
       ('album (supersonic-browse-visit (list :kind 'album :id (plist-get item :id) :item item)))
+      ('playlist (supersonic-browse-visit (list :kind 'playlist :id (plist-get item :id) :item item)))
       ('track (supersonic-playback-start (nthcdr (get-text-property (point) 'supersonic-browse-index)
                                                  (get-text-property (point) 'supersonic-browse-ids))))
       ((or 'button 'more) (funcall (plist-get item :action)))
@@ -1424,6 +1486,129 @@ TYPE is one of `supersonic-provider-album-list-types'."
             (aio-await (supersonic-provider-album-tracks (plist-get album :id)))))
    (message "Surprise: %s%s" (plist-get album :name)
             (if (plist-get album :artist) (concat " by " (plist-get album :artist)) ""))))
+
+;;;
+;;; Playlists
+;;;
+
+;;;###autoload
+(defun supersonic-browse-playlists ()
+  "Show every playlist in the browser."
+  (interactive)
+  (supersonic-browse-visit '(:kind playlists)))
+
+(defun supersonic-browse--playlist-choose (prompt)
+  "Pick a playlist with PROMPT; return it, or the name for a new one as a string."
+  (supersonic-provider-require 'playlists)
+  (let* ((playlists (aio-wait-for (supersonic-provider-playlists)))
+         (new "+ New playlist")
+         (names (mapcar (lambda (p) (plist-get p :name)) playlists))
+         (choice (completing-read prompt (cons new names) nil t)))
+    (if (equal choice new)
+        (let ((name (string-trim (read-string "Name of the new playlist: "))))
+          (when (string-empty-p name)
+            (user-error "A playlist needs a name"))
+          name)
+      (seq-find (lambda (p) (equal (plist-get p :name) choice)) playlists))))
+
+(defun supersonic-browse-add-to-playlist ()
+  "Add the song, album or artist in focus to a playlist, or to a new one."
+  (interactive)
+  (pcase-let ((`(,kind . ,item) (supersonic-browse--target)))
+    (when (memq kind '(button more))
+      (user-error "Not something to add to a playlist"))
+    (let* ((target (supersonic-browse--playlist-choose "Add to playlist: "))
+           (ids (aio-wait-for (supersonic-browse--track-ids kind item))))
+      (if (stringp target)
+          (progn
+            (aio-wait-for (supersonic-provider-create-playlist target ids))
+            (message "Made playlist %s of %s" target (supersonic-browse--plural (length ids) "song")))
+        (aio-wait-for (supersonic-provider-edit-playlist (plist-get target :id) (list :add ids)))
+        (message "Added %s to %s" (supersonic-browse--plural (length ids) "song") (plist-get target :name))
+        (when (equal (plist-get target :id) (plist-get supersonic-browse--page :id))
+          (supersonic-browse-reload))))))
+
+(defun supersonic-browse--playlist-row ()
+  "Return the position of the playlist track in focus, or complain."
+  (unless (eq (plist-get supersonic-browse--page :kind) 'playlist)
+    (user-error "Only on a playlist's page"))
+  (unless (eq (car-safe (get-text-property (point) 'supersonic-browse-key)) 'track)
+    (user-error "No song here"))
+  (get-text-property (point) 'supersonic-browse-index))
+
+(defun supersonic-browse-playlist-remove ()
+  "Remove the song in focus from this playlist."
+  (interactive)
+  (let ((row (supersonic-browse--playlist-row)))
+    (aio-wait-for (supersonic-provider-edit-playlist (plist-get supersonic-browse--page :id) (list :remove (list row))))
+    (setq supersonic-browse--restore-row (max 0 (min row (- (length (plist-get supersonic-browse--content :tracks)) 2))))
+    (supersonic-browse-reload)))
+
+(defun supersonic-browse--playlist-move (delta)
+  "Move the song in focus DELTA places in this playlist."
+  (let* ((row (supersonic-browse--playlist-row))
+         (ids (vconcat (mapcar (lambda (track) (plist-get track :id)) (plist-get supersonic-browse--content :tracks))))
+         (to (+ row delta)))
+    (when (and (>= to 0) (< to (length ids)))
+      (cl-rotatef (aref ids row) (aref ids to))
+      (aio-wait-for (supersonic-provider-set-playlist-tracks (plist-get supersonic-browse--page :id) (append ids nil)))
+      (setq supersonic-browse--restore-row to)
+      (supersonic-browse-reload))))
+
+(defun supersonic-browse-playlist-move-up ()
+  "Move the song in focus one place up this playlist."
+  (interactive)
+  (supersonic-browse--playlist-move -1))
+
+(defun supersonic-browse-playlist-move-down ()
+  "Move the song in focus one place down this playlist."
+  (interactive)
+  (supersonic-browse--playlist-move 1))
+
+(defun supersonic-browse-playlist-rename (name)
+  "Rename this playlist NAME."
+  (interactive
+   (progn
+     (unless (eq (plist-get supersonic-browse--page :kind) 'playlist)
+       (user-error "Only on a playlist's page"))
+     (list (read-string "Rename playlist to: " (plist-get (plist-get supersonic-browse--page :item) :name)))))
+  (aio-wait-for (supersonic-provider-edit-playlist (plist-get supersonic-browse--page :id) (list :name name)))
+  (setq supersonic-browse--page
+        (plist-put supersonic-browse--page :item (plist-put (copy-sequence (plist-get supersonic-browse--page :item)) :name name)))
+  (supersonic-browse-reload))
+
+(defun supersonic-browse-playlist-delete ()
+  "Delete this playlist, after asking."
+  (interactive)
+  (unless (eq (plist-get supersonic-browse--page :kind) 'playlist)
+    (user-error "Only on a playlist's page"))
+  (let ((name (plist-get (plist-get supersonic-browse--page :item) :name)))
+    (when (yes-or-no-p (format "Delete the playlist %s? " name))
+      (aio-wait-for (supersonic-provider-delete-playlist (plist-get supersonic-browse--page :id)))
+      (message "Deleted playlist %s" name)
+      (if supersonic-browse--back
+          (supersonic-browse-back)
+        (supersonic-browse-home)))))
+
+;;;###autoload
+(defun supersonic-save-queue-as-playlist (name)
+  "Save the play queue as the playlist NAME, replacing one so called after asking."
+  (interactive (list (string-trim (read-string "Save the queue as playlist: "))))
+  (when (string-empty-p name)
+    (user-error "A playlist needs a name"))
+  (supersonic-provider-require 'playlists)
+  (let ((ids (delq nil (mapcar (lambda (entry) (plist-get entry :track-id))
+                               (aio-wait-for (supersonic-playback-queue)))))
+        (existing (seq-find (lambda (p) (equal (plist-get p :name) name))
+                            (aio-wait-for (supersonic-provider-playlists)))))
+    (unless ids
+      (user-error "The queue is empty"))
+    (if existing
+        (if (yes-or-no-p (format "Replace the playlist %s? " name))
+            (aio-wait-for (supersonic-provider-set-playlist-tracks (plist-get existing :id) ids))
+          (user-error "Kept the playlist %s as it was" name))
+      (aio-wait-for (supersonic-provider-create-playlist name ids)))
+    (message "Saved the queue, %s, as %s" (supersonic-browse--plural (length ids) "song") name)))
 
 ;;;
 ;;; The mode
@@ -1462,7 +1647,14 @@ TYPE is one of `supersonic-provider-album-list-types'."
     (define-key map (kbd "M-<right>") #'supersonic-browse-forward)
     (define-key map (kbd "r") #'supersonic-browse-forward)
     (define-key map (kbd "h") #'supersonic-browse-home)
-    (define-key map (kbd "A") #'supersonic-browse-artists)
+    (define-key map (kbd "A") #'supersonic-browse-add-to-playlist)
+    (define-key map (kbd "d") #'supersonic-browse-playlist-remove)
+    (define-key map (kbd "M-p") #'supersonic-browse-playlist-move-up)
+    (define-key map (kbd "M-n") #'supersonic-browse-playlist-move-down)
+    (define-key map (kbd "M-<up>") #'supersonic-browse-playlist-move-up)
+    (define-key map (kbd "M-<down>") #'supersonic-browse-playlist-move-down)
+    (define-key map (kbd "e") #'supersonic-browse-playlist-rename)
+    (define-key map (kbd "D") #'supersonic-browse-playlist-delete)
     (define-key map (kbd "/") #'supersonic-browse-search)
     (define-key map (kbd "g") #'supersonic-browse-reload)
     (define-key map (kbd "?") #'describe-mode)

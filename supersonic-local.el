@@ -636,6 +636,105 @@ NOW-PLAYING is non-nil when it has just started; that is when it counts."
      (buffer-string))
    source))
 
+;;;; Playlists, as .m3u files
+
+(defun supersonic-local--playlist-directory ()
+  "Return the directory local playlists are kept in."
+  (file-name-as-directory
+   (or supersonic-local-playlist-directory
+       (expand-file-name "Playlists" (or (car supersonic-local-directories)
+                                         (user-error "Set `supersonic-local-directories' first"))))))
+
+(defun supersonic-local--playlist-file (id)
+  "Return the .m3u file of playlist ID."
+  (unless (string-prefix-p "playlist:" id)
+    (error "Not a local playlist: %s" id))
+  (substring id 9))
+
+(defun supersonic-local--read-playlist (file)
+  "Return the track files listed in the .m3u FILE, in order."
+  (with-temp-buffer
+    (let ((coding-system-for-read 'utf-8))
+      (insert-file-contents file))
+    (let ((directory (file-name-directory file))
+          (files nil))
+      (dolist (line (split-string (buffer-string) "\r?\n" t "[[:space:]]+"))
+        (unless (string-prefix-p "#" line)
+          (push (expand-file-name line directory) files)))
+      (nreverse files))))
+
+(defun supersonic-local--write-playlist (file track-files)
+  "Write TRACK-FILES to the .m3u FILE, in order."
+  (make-directory (file-name-directory file) t)
+  (let ((coding-system-for-write 'utf-8))
+    (with-temp-file file
+      (insert "#EXTM3U\n")
+      (dolist (track track-files)
+        (insert track "\n")))))
+
+(defun supersonic-local--playlist-plist (file)
+  "Return the playlist plist of the .m3u FILE."
+  (let* ((tracks (supersonic-local--read-playlist file))
+         (known (delq nil (mapcar (lambda (track) (and supersonic-local--tracks (gethash track supersonic-local--tracks)))
+                                  tracks))))
+    (list :id (concat "playlist:" file)
+          :name (file-name-sans-extension (file-name-nondirectory file))
+          :song-count (length tracks)
+          :duration (apply #'+ (mapcar (lambda (track) (or (plist-get track :duration) 0)) known))
+          :art (plist-get (car known) :art))))
+
+(aio-defun
+ supersonic-local--playlists () "Resolve to the playlists in the playlist directory."
+ (aio-await (supersonic-local--ensure-index))
+ (let ((directory (supersonic-local--playlist-directory)))
+   (and (file-directory-p directory)
+        (mapcar #'supersonic-local--playlist-plist
+                (directory-files directory t "\\.m3u8?\\'")))))
+
+(aio-defun
+ supersonic-local--playlist-tracks (id) "Resolve to the tracks of local playlist ID still found."
+ (aio-await (supersonic-local--ensure-index))
+ (delq nil (mapcar (lambda (file)
+                     (let ((track (gethash file supersonic-local--tracks)))
+                       (and track (supersonic-local--public track))))
+                   (supersonic-local--read-playlist (supersonic-local--playlist-file id)))))
+
+(defun supersonic-local--playlist-name-file (name)
+  "Return the .m3u file a playlist called NAME goes in."
+  (expand-file-name (concat (replace-regexp-in-string "[/\\:*?\"<>|]" "_" name) ".m3u")
+                    (supersonic-local--playlist-directory)))
+
+(aio-defun
+ supersonic-local--create-playlist (name ids) "Write a new playlist NAME of track IDS."
+ (let ((file (supersonic-local--playlist-name-file name)))
+   (when (file-exists-p file)
+     (user-error "There is a playlist called %s already" name))
+   (supersonic-local--write-playlist file ids)
+   (supersonic-local--playlist-plist file)))
+
+(aio-defun
+ supersonic-local--edit-playlist (id changes) "Make CHANGES to local playlist ID."
+ (let* ((file (supersonic-local--playlist-file id))
+        (remove (plist-get changes :remove))
+        (tracks (append (cl-loop for track in (supersonic-local--read-playlist file) for i from 0
+                                 unless (memq i remove) collect track)
+                        (plist-get changes :add))))
+   (supersonic-local--write-playlist file tracks)
+   (when (plist-get changes :name)
+     (rename-file file (supersonic-local--playlist-name-file (plist-get changes :name))))
+   nil))
+
+(aio-defun
+ supersonic-local--set-playlist-tracks (id ids) "Make track IDS local playlist ID's tracks."
+ (supersonic-local--write-playlist (supersonic-local--playlist-file id) ids)
+ nil)
+
+(aio-defun
+ supersonic-local--delete-playlist (id) "Move local playlist ID to the trash."
+ (let ((delete-by-moving-to-trash t))
+   (delete-file (supersonic-local--playlist-file id) t))
+ nil)
+
 (defun supersonic-local--cache-namespace ()
   "Return the namespace of local ids, which are file names already."
   "local")
@@ -657,6 +756,12 @@ NOW-PLAYING is non-nil when it has just started; that is when it counts."
    (scrobble . supersonic-local--scrobble)
    (cover-art . supersonic-local--cover-art)
    (lyrics . supersonic-local--lyrics)
+   (playlists . supersonic-local--playlists)
+   (playlist-tracks . supersonic-local--playlist-tracks)
+   (create-playlist . supersonic-local--create-playlist)
+   (edit-playlist . supersonic-local--edit-playlist)
+   (set-playlist-tracks . supersonic-local--set-playlist-tracks)
+   (delete-playlist . supersonic-local--delete-playlist)
    (cache-namespace . supersonic-local--cache-namespace)
    (config-hints . supersonic-local--config-hints)))
 

@@ -9033,6 +9033,59 @@ the section; the same for lines of one item, like tracks."
       (supersonic-mpris--seek -2500000))
     (should (equal '(5.0 -2.5) (nreverse seeks)))))
 
+(ert-deftest supersonic-tests-subsonic-playlist-requests ()
+  "Creating and editing playlists passes songs as repeated parameters, a
+hundred per request, removals and the new name with the first."
+  (let ((requests nil))
+    (cl-letf (((symbol-function 'supersonic-build-url) (lambda (endpoint query) (cons endpoint query)))
+              ((symbol-function 'supersonic-get-json)
+               (aio-lambda (url)
+                 (push url requests)
+                 (if (equal (car url) "/createPlaylist.view")
+                     '(("subsonic-response" ("playlist" ("id" . "p1") ("name" . "Mix"))))
+                   '(("subsonic-response"))))))
+      (let ((ids (mapcar #'number-to-string (number-sequence 1 150))))
+        (should (equal "p1" (plist-get (aio-wait-for (supersonic-subsonic--create-playlist "Mix" ids)) :id))))
+      (setq requests (nreverse requests))
+      (should (equal "/createPlaylist.view" (car (nth 0 requests))))
+      (should (= 100 (cl-count "songId" (cdr (nth 0 requests)) :key #'car :test #'equal)))
+      (should (equal "/updatePlaylist.view" (car (nth 1 requests))))
+      (should (= 50 (cl-count "songIdToAdd" (cdr (nth 1 requests)) :key #'car :test #'equal)))
+      (setq requests nil)
+      (aio-wait-for (supersonic-subsonic--edit-playlist "p1" '(:name "New" :remove (3 1))))
+      (should (equal '(("playlistId" . "p1") ("name" . "New") ("songIndexToRemove" . "1") ("songIndexToRemove" . "3"))
+                     (cdr (car requests)))))))
+
+(ert-deftest supersonic-tests-local-playlists-are-m3u-files ()
+  "Local playlists are .m3u files: made, listed, edited, reordered and
+trashed, with tracks no longer found left out."
+  (require 'supersonic-local)
+  (let* ((dir (make-temp-file "supersonic-pl" t))
+         (supersonic-local-playlist-directory dir)
+         (delete-by-moving-to-trash nil))
+    (unwind-protect
+        (supersonic-tests--with-local-index
+            (list '(:id "/m/a.flac" :title "A" :album-artist "X" :album "Y" :duration 60)
+                  '(:id "/m/b.flac" :title "B" :album-artist "X" :album "Y" :duration 30))
+          (cl-letf (((symbol-function 'supersonic-local--ensure-index) (aio-lambda () nil))
+                    ((symbol-function 'move-file-to-trash) #'delete-file))
+            (let* ((made (aio-wait-for (supersonic-local--create-playlist "Road trip" '("/m/a.flac" "/m/gone.flac"))))
+                   (id (plist-get made :id)))
+              (should (equal "Road trip" (plist-get made :name)))
+              (should (equal '("Road trip") (mapcar (lambda (p) (plist-get p :name))
+                                                    (aio-wait-for (supersonic-local--playlists)))))
+              (should (equal '("A") (mapcar (lambda (x) (plist-get x :title))
+                                            (aio-wait-for (supersonic-local--playlist-tracks id)))))
+              (aio-wait-for (supersonic-local--edit-playlist id '(:add ("/m/b.flac") :remove (1))))
+              (should (equal '("A" "B") (mapcar (lambda (x) (plist-get x :title))
+                                                (aio-wait-for (supersonic-local--playlist-tracks id)))))
+              (aio-wait-for (supersonic-local--set-playlist-tracks id '("/m/b.flac" "/m/a.flac")))
+              (should (equal '("B" "A") (mapcar (lambda (x) (plist-get x :title))
+                                                (aio-wait-for (supersonic-local--playlist-tracks id)))))
+              (aio-wait-for (supersonic-local--delete-playlist id))
+              (should-not (aio-wait-for (supersonic-local--playlists))))))
+      (delete-directory dir t))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here

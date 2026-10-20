@@ -67,7 +67,9 @@
 (defconst supersonic-provider-operations
   '(artists artist-albums album-list album-tracks track search
     podcasts podcast-episodes add-podcast download-podcast-episode
-    stream-url scrobble cover-art cover-art-url lyrics cache-namespace config-hints)
+    stream-url scrobble cover-art cover-art-url lyrics
+    playlists playlist-tracks create-playlist edit-playlist set-playlist-tracks delete-playlist
+    cache-namespace config-hints)
   "The library operations a provider can implement.
 All but `scrobble', `cache-namespace' and `config-hints' return a
 promise.
@@ -122,6 +124,20 @@ promise.
   `:translation-source' naming where it came from; and
   `:alternatives', a list of lyrics plists of the same song in other
   languages, for picking a translation from.
+- `playlists' takes no arguments and resolves to every playlist, each a
+  plist (:id :name :song-count :duration :art :owner), only `:id' and
+  `:name' being sure to be there.
+- `playlist-tracks' takes a playlist id and resolves to its tracks, in
+  order; the same track may be there more than once.
+- `create-playlist' takes a NAME and a list of track ids and resolves
+  to the new playlist.
+- `edit-playlist' takes a playlist id and a plist of changes:
+  `:name', a new name; `:add', track ids to append; `:remove', the
+  0-based positions of tracks to drop.  Resolves once done.
+- `set-playlist-tracks' takes a playlist id and a list of track ids
+  and resolves once those are its tracks, in that order -- how tracks
+  are reordered.
+- `delete-playlist' takes a playlist id and resolves once it is gone.
 - `cache-namespace' takes no arguments and returns a string naming
   the library this provider is connected to, such as a server
   address.  See `supersonic-provider-cache-name'.
@@ -287,6 +303,38 @@ may carry credentials, as `supersonic-provider-stream-url''s may."
  "Return a promise resolving to the lyrics of the track with TRACK-ID, or nil.
 See `supersonic-provider-operations' for their shape."
  (aio-await (supersonic-provider--call 'lyrics track-id)))
+
+(aio-defun
+ supersonic-provider-playlists ()
+ "Return a promise resolving to every playlist."
+ (aio-await (supersonic-provider--call 'playlists)))
+
+(aio-defun
+ supersonic-provider-playlist-tracks (playlist-id)
+ "Return a promise resolving to the tracks of PLAYLIST-ID, in order."
+ (aio-await (supersonic-provider--call 'playlist-tracks playlist-id)))
+
+(aio-defun
+ supersonic-provider-create-playlist (name track-ids)
+ "Return a promise resolving to a new playlist NAME of TRACK-IDS."
+ (aio-await (supersonic-provider--call 'create-playlist name track-ids)))
+
+(aio-defun
+ supersonic-provider-edit-playlist (playlist-id changes)
+ "Return a promise resolving once CHANGES are made to PLAYLIST-ID.
+CHANGES is a plist of `:name', `:add' and `:remove', see
+`supersonic-provider-operations'."
+ (aio-await (supersonic-provider--call 'edit-playlist playlist-id changes)))
+
+(aio-defun
+ supersonic-provider-set-playlist-tracks (playlist-id track-ids)
+ "Return a promise resolving once TRACK-IDS are PLAYLIST-ID's tracks, in order."
+ (aio-await (supersonic-provider--call 'set-playlist-tracks playlist-id track-ids)))
+
+(aio-defun
+ supersonic-provider-delete-playlist (playlist-id)
+ "Return a promise resolving once PLAYLIST-ID is deleted."
+ (aio-await (supersonic-provider--call 'delete-playlist playlist-id)))
 
 (defun supersonic-provider-cache-name (id)
   "Return a file name for ID that is safe, bounded and unique to the library.

@@ -569,6 +569,12 @@ conflict copies Syncthing makes."
   :type 'integer
   :group 'supersonic-local)
 
+(defcustom supersonic-local-playlist-directory nil
+  "Directory the `local' provider keeps playlists in, as .m3u files.
+nil means \"Playlists\" in the first of `supersonic-local-directories'."
+  :type '(choice (const :tag "Playlists in the library" nil) directory)
+  :group 'supersonic-local)
+
 (defcustom supersonic-local-offer-fallback t
   "Non-nil to offer switching to local files when the server is unreachable.
 Only once `supersonic-local' is loaded and `supersonic-local-directories'

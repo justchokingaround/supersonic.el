@@ -95,6 +95,12 @@ as `:genre', for a now-playing row of the user's own to read."
      (:album-id . "albumId")
      (:artist-id . "artistId"))))
 
+(defun supersonic-subsonic--playlist (data)
+  "Turn a Subsonic playlist alist DATA into a facade playlist plist."
+  (supersonic-subsonic--plist
+   data '((:name . "name") (:song-count . "songCount") (:duration . "duration")
+          (:art . "coverArt") (:owner . "owner") (:comment . "comment"))))
+
 (defun supersonic-subsonic--podcast (data)
   "Turn a Subsonic podcast channel alist DATA into a facade podcast plist."
   (supersonic-subsonic--plist data '((:title . "title") (:art . "coverArt"))))
@@ -394,6 +400,75 @@ without it."
                   :lines (mapcar (lambda (line) (cons nil line)) (split-string (string-trim text) "\\r?\\n"))
                   :source "server"))))))
 
+(aio-defun
+ supersonic-subsonic--playlists () "Return a promise resolving to every playlist, via getPlaylists."
+ (mapcar #'supersonic-subsonic--playlist
+         (supersonic-recursive-assoc
+          (aio-await (supersonic-get-json (supersonic-build-url "/getPlaylists.view" nil)))
+          '("subsonic-response" "playlists" "playlist"))))
+
+(aio-defun
+ supersonic-subsonic--playlist-tracks (id) "Return a promise resolving to playlist ID's tracks, via getPlaylist."
+ (mapcar #'supersonic-subsonic--track
+         (supersonic-recursive-assoc
+          (aio-await (supersonic-get-json (supersonic-build-url "/getPlaylist.view" `(("id" . ,id)))))
+          '("subsonic-response" "playlist" "entry"))))
+
+(defun supersonic-subsonic--song-params (key ids)
+  "Return the query pairs passing IDS, each under KEY."
+  (mapcar (lambda (id) (cons key id)) ids))
+
+(aio-defun
+ supersonic-subsonic--create-playlist (name ids)
+ "Create playlist NAME of track IDS via createPlaylist; resolve to it.
+Tracks past the first hundred are added after, keeping URLs short."
+ (let* ((data (aio-await (supersonic-get-json
+                          (supersonic-build-url
+                           "/createPlaylist.view"
+                           (cons (cons "name" name) (supersonic-subsonic--song-params "songId" (seq-take ids 100)))))))
+        (playlist (supersonic-recursive-assoc data '("subsonic-response" "playlist")))
+        (made (and playlist (supersonic-subsonic--playlist playlist))))
+   (when (and made (nthcdr 100 ids))
+     (aio-await (supersonic-subsonic--edit-playlist (plist-get made :id) (list :add (nthcdr 100 ids)))))
+   made))
+
+(aio-defun
+ supersonic-subsonic--edit-playlist (id changes)
+ "Make CHANGES to playlist ID via updatePlaylist, a hundred tracks at a time."
+ (let ((remove (sort (copy-sequence (plist-get changes :remove)) #'<))
+       (add (plist-get changes :add))
+       (first t))
+   (while (or first add)
+     (aio-await
+      (supersonic-get-json
+       (supersonic-build-url
+        "/updatePlaylist.view"
+        (append `(("playlistId" . ,id))
+                (and first (plist-get changes :name) `(("name" . ,(plist-get changes :name))))
+                (and first (mapcar (lambda (i) (cons "songIndexToRemove" (number-to-string i))) remove))
+                (supersonic-subsonic--song-params "songIdToAdd" (seq-take add 100))))))
+     (setq first nil
+           add (nthcdr 100 add)))
+   nil))
+
+(aio-defun
+ supersonic-subsonic--set-playlist-tracks (id ids)
+ "Make track IDS playlist ID's tracks, in order.
+createPlaylist with a playlistId replaces the tracks; past the first
+hundred, the rest are appended."
+ (aio-await (supersonic-get-json
+             (supersonic-build-url
+              "/createPlaylist.view"
+              (cons (cons "playlistId" id) (supersonic-subsonic--song-params "songId" (seq-take ids 100))))))
+ (when (nthcdr 100 ids)
+   (aio-await (supersonic-subsonic--edit-playlist id (list :add (nthcdr 100 ids)))))
+ nil)
+
+(aio-defun
+ supersonic-subsonic--delete-playlist (id) "Delete playlist ID via deletePlaylist."
+ (aio-await (supersonic-get-json (supersonic-build-url "/deletePlaylist.view" `(("id" . ,id)))))
+ nil)
+
 (defun supersonic-subsonic--cache-namespace ()
   "Return the Subsonic server's address, `supersonic-host'.
 Ids are only unique per server, so this is what keeps one server's
@@ -423,6 +498,12 @@ cached art and waveforms apart from another's."
    (cover-art . supersonic-subsonic--cover-art)
    (cover-art-url . supersonic-subsonic--cover-art-url)
    (lyrics . supersonic-subsonic--lyrics)
+   (playlists . supersonic-subsonic--playlists)
+   (playlist-tracks . supersonic-subsonic--playlist-tracks)
+   (create-playlist . supersonic-subsonic--create-playlist)
+   (edit-playlist . supersonic-subsonic--edit-playlist)
+   (set-playlist-tracks . supersonic-subsonic--set-playlist-tracks)
+   (delete-playlist . supersonic-subsonic--delete-playlist)
    (cache-namespace . supersonic-subsonic--cache-namespace)
    (config-hints . supersonic-subsonic--config-hints)))
 

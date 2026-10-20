@@ -61,6 +61,8 @@
 (declare-function supersonic-browse-artists "supersonic-browse")
 (declare-function supersonic-browse-album-list "supersonic-browse")
 (declare-function supersonic-browse-search "supersonic-browse")
+(declare-function supersonic-browse-playlists "supersonic-browse")
+(declare-function supersonic-save-queue-as-playlist "supersonic-browse")
 (declare-function supersonic-lyrics-toggle-echo-area "supersonic-lyrics")
 (declare-function supersonic-lyrics-toggle-translation "supersonic-lyrics")
 
@@ -214,6 +216,8 @@ binds itself afterwards win."
     (define-key map (kbd "C") #'supersonic-clear-queue)
     (define-key map (kbd "l") #'supersonic-lyrics)
     (define-key map (kbd "O") #'supersonic-local-toggle)
+    (define-key map (kbd "W") #'supersonic-save-queue-as-playlist)
+    (define-key map (kbd "L") #'supersonic-browse-playlists)
     (define-key map (kbd "t") #'supersonic-lyrics-toggle-echo-area)
     (define-key map (kbd "T") #'supersonic-lyrics-toggle-translation)
     map)
@@ -564,6 +568,7 @@ entry is matched with `eq', as the same track may be queued twice."
     (define-key map (kbd "M-<up>") #'supersonic-queue-move-up)
     (define-key map (kbd "M-<down>") #'supersonic-queue-move-down)
     (define-key map (kbd "C") #'supersonic-clear-queue)
+    (define-key map (kbd "W") #'supersonic-save-queue-as-playlist)
     map)
   "Keymap for `supersonic-queue-mode'.")
 
