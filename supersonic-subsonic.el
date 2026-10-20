@@ -498,6 +498,28 @@ the URL short."
               `(("position" . ,(number-to-string (round (* 1000 (or position 0))))))))))
    nil))
 
+(aio-defun
+ supersonic-subsonic--similar-tracks (id count)
+ "Return a promise resolving to at most COUNT tracks like ID's.
+Asks getSimilarSongs.
+ID may be a song's, an album's or an artist's; the server asks its
+external agents, such as Last.fm, which may know nothing."
+ (mapcar #'supersonic-subsonic--track
+         (supersonic-recursive-assoc
+          (aio-await (supersonic-get-json (supersonic-build-url "/getSimilarSongs.view"
+                                                                `(("id" . ,id) ("count" . ,(number-to-string count))))))
+          '("subsonic-response" "similarSongs" "song"))))
+
+(aio-defun
+ supersonic-subsonic--random-tracks (count &optional genre)
+ "Return a promise resolving to at most COUNT random tracks, via getRandomSongs."
+ (mapcar #'supersonic-subsonic--track
+         (supersonic-recursive-assoc
+          (aio-await (supersonic-get-json (supersonic-build-url "/getRandomSongs.view"
+                                                                (append `(("size" . ,(number-to-string count)))
+                                                                        (and genre `(("genre" . ,genre)))))))
+          '("subsonic-response" "randomSongs" "song"))))
+
 (defun supersonic-subsonic--cache-namespace ()
   "Return the Subsonic server's address, `supersonic-host'.
 Ids are only unique per server, so this is what keeps one server's
@@ -535,6 +557,8 @@ cached art and waveforms apart from another's."
    (delete-playlist . supersonic-subsonic--delete-playlist)
    (play-queue . supersonic-subsonic--play-queue)
    (save-play-queue . supersonic-subsonic--save-play-queue)
+   (similar-tracks . supersonic-subsonic--similar-tracks)
+   (random-tracks . supersonic-subsonic--random-tracks)
    (cache-namespace . supersonic-subsonic--cache-namespace)
    (config-hints . supersonic-subsonic--config-hints)))
 

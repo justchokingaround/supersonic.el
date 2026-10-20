@@ -9186,6 +9186,42 @@ saving sends ids around the one playing, the current id and milliseconds."
        (aio-wait-for (supersonic-resume-save))))
     (should (equal '(("a" "b") 1 12.5) saved))))
 
+(ert-deftest supersonic-tests-radio-more-falls-back-and-skips-queued ()
+  "More tracks come from similar ones, then random ones of the genre, then
+random ones, leaving out what is queued already."
+  (require 'supersonic-radio)
+  (cl-letf (((symbol-function 'supersonic-provider-supports-p) (lambda (&rest _) t))
+            ((symbol-function 'supersonic-provider-similar-tracks)
+             (aio-lambda (_id _count) '((:id "s1") (:id "q1"))))
+            ((symbol-function 'supersonic-provider-random-tracks)
+             (aio-lambda (_count &optional genre)
+               (if genre '((:id "g1") (:id "s1")) '((:id "r1") (:id "r2"))))))
+    (should (equal '("s1" "g1" "r1")
+                   (aio-wait-for (supersonic-radio--more '(:id "x" :genre "Rock") '("q1") 3))))
+    (should (equal '("s1") (aio-wait-for (supersonic-radio--more '(:id "x") '("q1") 1))))))
+
+(ert-deftest supersonic-tests-autoplay-extends-only-at-the-end ()
+  "Autoplay adds tracks when the last one of the queue plays, not before."
+  (require 'supersonic-radio)
+  (let ((enqueued nil)
+        (queue '((:track-id "a" :current t) (:track-id "b")))
+        (supersonic-radio--extending nil)
+        (supersonic-autoplay-count 2))
+    (supersonic-tests--with-backend
+     `((live-p . ,(lambda () t))
+       (queue . ,(aio-lambda () queue))
+       (enqueue . ,(lambda (ids) (setq enqueued ids))))
+     (cl-letf (((symbol-function 'supersonic-provider-track) (aio-lambda (id) (list :id id)))
+               ((symbol-function 'supersonic-radio--more) (aio-lambda (_seed exclude _count)
+                                                            (should (equal '("a" "b") exclude))
+                                                            '("c" "d"))))
+       (let ((inhibit-message t))
+         (aio-wait-for (supersonic-radio--extend))
+         (should-not enqueued)
+         (setq queue '((:track-id "a") (:track-id "b" :current t)))
+         (aio-wait-for (supersonic-radio--extend))
+         (should (equal '("c" "d") enqueued)))))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here

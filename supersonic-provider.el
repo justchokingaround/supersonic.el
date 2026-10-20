@@ -69,7 +69,7 @@
     podcasts podcast-episodes add-podcast download-podcast-episode
     stream-url scrobble cover-art cover-art-url lyrics
     playlists playlist-tracks create-playlist edit-playlist set-playlist-tracks delete-playlist
-    play-queue save-play-queue
+    play-queue save-play-queue similar-tracks random-tracks
     cache-namespace config-hints)
   "The library operations a provider can implement.
 All but `scrobble', `cache-namespace' and `config-hints' return a
@@ -143,6 +143,10 @@ promise.
   last, as (:ids IDS :current INDEX :position SECONDS), or nil.
 - `save-play-queue' takes IDS, the INDEX of the one playing and the
   POSITION in it in seconds, and resolves once they are saved.
+- `similar-tracks' takes the id of a track, an album or an artist and
+  a COUNT, and resolves to at most COUNT tracks like it.
+- `random-tracks' takes a COUNT and an optional GENRE and resolves to
+  at most COUNT tracks picked at random, of GENRE if given.
 - `cache-namespace' takes no arguments and returns a string naming
   the library this provider is connected to, such as a server
   address.  See `supersonic-provider-cache-name'.
@@ -350,6 +354,19 @@ CHANGES is a plist of `:name', `:add' and `:remove', see
  supersonic-provider-save-play-queue (ids index position)
  "Return a promise resolving once IDS, playing INDEX at POSITION, are saved."
  (aio-await (supersonic-provider--call 'save-play-queue ids index position)))
+
+(aio-defun
+ supersonic-provider-similar-tracks (id count)
+ "Return a promise resolving to at most COUNT tracks like ID's.
+ID is a track's, an album's or an artist's."
+ (aio-await (supersonic-provider--call 'similar-tracks id count)))
+
+(aio-defun
+ supersonic-provider-random-tracks (count &optional genre)
+ "Return a promise resolving to at most COUNT random tracks, of GENRE if given."
+ (aio-await (if genre
+                (supersonic-provider--call 'random-tracks count genre)
+              (supersonic-provider--call 'random-tracks count))))
 
 (defun supersonic-provider-cache-name (id)
   "Return a file name for ID that is safe, bounded and unique to the library.

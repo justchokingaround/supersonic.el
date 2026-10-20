@@ -1435,6 +1435,20 @@ TYPE is one of `supersonic-provider-album-list-types'."
       (supersonic-playback-start (supersonic-browse--shuffled (get-text-property (point) 'supersonic-browse-ids)))
     (supersonic-browse--with-ids "Shuffling" (lambda (ids) (supersonic-playback-start (supersonic-browse--shuffled ids))))))
 
+(declare-function supersonic-radio "supersonic-radio")
+
+(defun supersonic-browse-radio ()
+  "Start a radio from the item in focus: it, then what is like it."
+  (interactive)
+  (pcase-let ((`(,kind . ,item) (supersonic-browse--target)))
+    (pcase kind
+      ('track (supersonic-radio (plist-get item :id)))
+      ((or 'album 'artist)
+       (let ((ids (aio-wait-for (supersonic-browse--track-ids kind item))))
+         (unless ids (user-error "Nothing to start a radio from"))
+         (supersonic-radio (plist-get item :id) (list (nth (random (length ids)) ids)))))
+      (_ (user-error "Start a radio from a song, an album or an artist")))))
+
 (defun supersonic-browse-enqueue ()
   "Add the item in focus to the play queue."
   (interactive)
@@ -1634,7 +1648,8 @@ TYPE is one of `supersonic-provider-album-list-types'."
      ("play" supersonic-browse-play)
      ("shuffle" supersonic-browse-shuffle)
      ("add to the queue" supersonic-browse-enqueue)
-     ("add to a playlist" supersonic-browse-add-to-playlist))
+     ("add to a playlist" supersonic-browse-add-to-playlist)
+     ("radio: it, then more like it" supersonic-browse-radio))
     ("Pages" browser
      ("back / forward" supersonic-browse-back supersonic-browse-forward)
      ("home" supersonic-browse-home)
@@ -1648,6 +1663,7 @@ TYPE is one of `supersonic-provider-album-list-types'."
     ("Now playing" player
      ("go to the artist" supersonic-player-goto-artist)
      ("go to the album" supersonic-player-goto-album)
+     ("radio from this song" supersonic-radio)
      ("back to the library" supersonic-player-library)
      ("reload" supersonic-player-refresh))
     ("From anywhere" prefix
@@ -1874,6 +1890,7 @@ The keys are read off the keymaps, so they are the ones bound."
     (define-key map (kbd "r") #'supersonic-browse-forward)
     (define-key map (kbd "h") #'supersonic-browse-home)
     (define-key map (kbd "A") #'supersonic-browse-add-to-playlist)
+    (define-key map (kbd "x") #'supersonic-browse-radio)
     (define-key map (kbd "d") #'supersonic-browse-playlist-remove)
     (define-key map (kbd "M-p") #'supersonic-browse-playlist-move-up)
     (define-key map (kbd "M-n") #'supersonic-browse-playlist-move-down)

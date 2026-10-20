@@ -745,6 +745,42 @@ NOW-PLAYING is non-nil when it has just started; that is when it counts."
                                (list :ids ids :current index :position position))
  nil)
 
+(defun supersonic-local--shuffled (list)
+  "Return a shuffled copy of LIST."
+  (let ((vector (vconcat list)))
+    (cl-loop for i from (1- (length vector)) downto 1
+             do (cl-rotatef (aref vector i) (aref vector (random (1+ i)))))
+    (append vector nil)))
+
+(aio-defun
+ supersonic-local--similar-tracks (id count)
+ "Resolve to at most COUNT local tracks like ID's: the same artist or genre."
+ (aio-await (supersonic-local--ensure-index))
+ (let* ((seed (or (gethash id supersonic-local--tracks)
+                  (car (plist-get (gethash id supersonic-local--albums) :tracks))
+                  (let ((artist (gethash id supersonic-local--artists)))
+                    (car (plist-get (gethash (car (plist-get artist :albums)) supersonic-local--albums) :tracks)))))
+        (artist (plist-get seed :album-artist))
+        (genre (plist-get seed :genre)))
+   (mapcar #'supersonic-local--public
+           (seq-take (supersonic-local--shuffled
+                      (seq-filter (lambda (track)
+                                    (and (not (equal (plist-get track :id) id))
+                                         (or (and artist (equal (plist-get track :album-artist) artist))
+                                             (and genre (equal (plist-get track :genre) genre)))))
+                                  (hash-table-values supersonic-local--tracks)))
+                     count))))
+
+(aio-defun
+ supersonic-local--random-tracks (count &optional genre)
+ "Resolve to at most COUNT random local tracks, of GENRE if given."
+ (aio-await (supersonic-local--ensure-index))
+ (mapcar #'supersonic-local--public
+         (seq-take (supersonic-local--shuffled
+                    (seq-filter (lambda (track) (or (not genre) (equal (plist-get track :genre) genre)))
+                                (hash-table-values supersonic-local--tracks)))
+                   count)))
+
 (defun supersonic-local--cache-namespace ()
   "Return the namespace of local ids, which are file names already."
   "local")
@@ -774,6 +810,8 @@ NOW-PLAYING is non-nil when it has just started; that is when it counts."
    (delete-playlist . supersonic-local--delete-playlist)
    (play-queue . supersonic-local--play-queue)
    (save-play-queue . supersonic-local--save-play-queue)
+   (similar-tracks . supersonic-local--similar-tracks)
+   (random-tracks . supersonic-local--random-tracks)
    (cache-namespace . supersonic-local--cache-namespace)
    (config-hints . supersonic-local--config-hints)))
 

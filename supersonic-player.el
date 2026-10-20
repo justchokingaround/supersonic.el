@@ -57,6 +57,7 @@
 (declare-function supersonic-lyrics--line-text "supersonic-lyrics")
 
 (defvar supersonic-player-mode-map)
+(declare-function supersonic-radio "supersonic-radio")
 
 (defconst supersonic-player-buffer-name "*supersonic-player*"
   "Name of the now-playing page's buffer.")
@@ -695,6 +696,7 @@ the accent colour itself; the big play/pause gets a halo instead."
     (define-key map (kbd "+") #'supersonic-player-volume-up)
     (define-key map (kbd "=") #'supersonic-player-volume-up)
     (define-key map (kbd "-") #'supersonic-player-volume-down)
+    (define-key map (kbd "x") #'supersonic-radio)
     (define-key map (kbd "a") #'supersonic-player-goto-artist)
     (define-key map (kbd "o") #'supersonic-player-goto-album)
     (define-key map (kbd "DEL") #'supersonic-player-library)

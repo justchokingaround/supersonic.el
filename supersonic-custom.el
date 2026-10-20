@@ -766,5 +766,12 @@ long queue is cut short."
   :type 'integer
   :group 'supersonic)
 
+;;;; Radio and autoplay
+
+(defcustom supersonic-autoplay-count 10
+  "Tracks added at a time by `supersonic-autoplay-mode' and a radio's start."
+  :type 'integer
+  :group 'supersonic)
+
 (provide 'supersonic-custom)
 ;;; supersonic-custom.el ends here
