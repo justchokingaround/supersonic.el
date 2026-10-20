@@ -691,6 +691,12 @@ a row the provider cannot fill, or that is empty, is left out."
   "Face of the current page in the browser's trail."
   :group 'supersonic-browse)
 
+(defcustom supersonic-cheatsheet-show-prefix nil
+  "Non-nil for the cheatsheet to list the keys of `supersonic-command-map' too.
+Under whatever prefix key it is bound to."
+  :type 'boolean
+  :group 'supersonic-browse)
+
 (defface supersonic-cheatsheet-key
   '((t :inherit (bold supersonic-browse-accent header-line)
        :box (:line-width (6 . 2) :style flat-button)))

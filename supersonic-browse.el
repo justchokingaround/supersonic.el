@@ -225,17 +225,17 @@ At X and Y, 0 by default.  FILE is resolved against the image's
                        (supersonic-browse--initials (or (plist-get item :name) (plist-get item :title)))))))))
 
 (defun supersonic-browse--tile-image (item shape selected)
-  "Return the display spec of ITEM's tile, a SHAPE, lifted out if SELECTED.
-A tile not in focus draws its art inset; the one in focus draws it
-larger, glowing in the accent colour around its edges, with a play
-badge."
+  "Return the display spec of ITEM's tile, a SHAPE, glowing if SELECTED.
+The art is the same size either way, so nothing moves as focus does;
+the tile in focus glows in the accent colour around its edges."
   (let* ((size supersonic-browse-tile-size)
          (file (supersonic-browse--art-file item (* 2 size)))
          (cache-key (list (plist-get item :id) shape selected file size))
          (cached (and supersonic-browse--images (gethash cache-key supersonic-browse--images))))
     (or cached
         (let* ((svg (svg-create size size))
-               (inset (if selected (round (* size 0.05)) (round (* size 0.075))))
+               ;; Room around the art for the glow to spread into.
+               (inset (round (* size 0.06)))
                (inner (- size (* 2 inset)))
                (accent (supersonic-browse--accent)))
           (when selected
@@ -257,13 +257,6 @@ badge."
                           `(stroke-width . ,(if selected 1.5 1)))))
             (dom-set-attribute outline 'transform (format "translate(%s,%s)" inset inset))
             (dom-append-child svg outline))
-          (when selected
-            (let ((r (round (* size 0.11)))
-                  (c (- size inset (round (* size 0.15)))))
-              (dom-append-child svg (dom-node 'circle `((cx . ,c) (cy . ,c) (r . ,(+ r 3)) (fill . ,(supersonic-browse--bg))
-                                                        (fill-opacity . "0.5"))))
-              (dom-append-child svg (dom-node 'circle `((cx . ,c) (cy . ,c) (r . ,r) (fill . ,accent))))
-              (dom-append-child svg (supersonic-browse--icon 'play (+ c 1) c (supersonic-browse--bg)))))
           (let ((image (apply #'svg-image svg :ascent 100 :scale 1 (and file (list :base-uri file)))))
             (unless supersonic-browse--images
               (setq supersonic-browse--images (make-hash-table :test #'equal)))
@@ -1687,12 +1680,18 @@ An entry none of whose commands has a key is left out.")
       (map-keymap (lambda (original target) (when (eq target command) (push original from))) remaps))
     from))
 
+(defun supersonic-cheatsheet--prefix-keys (maps)
+  "Return the keys `supersonic-command-map' is bound to in MAPS."
+  (where-is-internal 'supersonic-command-map
+                     (append maps (and (boundp 'xah-fly-command-map) (list (symbol-value 'xah-fly-command-map))))))
+
 (defun supersonic-cheatsheet--keys (command maps)
   "Return the keys running COMMAND in MAPS, as short strings.
 Keys of commands MAPS remap to COMMAND count too, looked up in the
 modal editing package's own map if there is one -- that is where the
 motions people use live."
   (let* ((modal (and (boundp 'xah-fly-command-map) (list (symbol-value 'xah-fly-command-map))))
+         (prefixes (supersonic-cheatsheet--prefix-keys maps))
          (keys (append (where-is-internal command maps)
                        (mapcan (lambda (original)
                                  (append (where-is-internal original (append modal maps))))
@@ -1703,7 +1702,12 @@ motions people use live."
             (delq nil (mapcar (lambda (key)
                                 (let ((description (key-description key)))
                                   (unless (or (eq (aref key 0) 'remap) (memq (aref key 0) '(menu-bar tool-bar))
-                                              (string-match-p "mouse\\|wheel" description))
+                                              (string-match-p "mouse\\|wheel" description)
+                                              ;; Through the prefix map: one's own, not the buffer's.
+                                              (seq-some (lambda (prefix)
+                                                          (and (> (length key) (length prefix))
+                                                               (equal (seq-take key (length prefix)) prefix)))
+                                                        prefixes))
                                     description)))
                               keys)))
            (lambda (a b) (< (length a) (length b))))
@@ -1757,7 +1761,8 @@ PREFIX is put before the keys of a `prefix' section."
                                     ('playlist (and browser (eq (plist-get page :kind) 'playlist)
                                                     (supersonic-cheatsheet--entries section maps prefix)))
                                     ('player (and player (supersonic-cheatsheet--entries section maps prefix)))
-                                    ('prefix (supersonic-cheatsheet--entries section prefix-maps prefix)))))
+                                    ('prefix (and supersonic-cheatsheet-show-prefix
+                                                  (supersonic-cheatsheet--entries section prefix-maps prefix))))))
                      (and entries (cons (car section) entries))))
                  supersonic-cheatsheet--sections)))
          (width (window-body-width (get-buffer-window (current-buffer) t) t))
