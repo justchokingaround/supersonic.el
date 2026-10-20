@@ -45,6 +45,9 @@
 (require 'supersonic-provider)
 (require 'supersonic-playback)
 
+(declare-function supersonic--fetch-art "supersonic-art")
+(declare-function supersonic-art-cache-file "supersonic-art")
+
 (defgroup supersonic-mpris nil
   "MPRIS (D-Bus) remote control support for supersonic.el."
   :prefix "supersonic-mpris-"
@@ -108,7 +111,21 @@
     <method name=\"Stop\"/>
     <method name=\"Next\"/>
     <method name=\"Previous\"/>
+    <method name=\"Seek\">
+      <arg name=\"Offset\" type=\"x\" direction=\"in\"/>
+    </method>
+    <method name=\"SetPosition\">
+      <arg name=\"TrackId\" type=\"o\" direction=\"in\"/>
+      <arg name=\"Position\" type=\"x\" direction=\"in\"/>
+    </method>
+    <signal name=\"Seeked\">
+      <arg name=\"Position\" type=\"x\"/>
+    </signal>
     <property name=\"PlaybackStatus\" type=\"s\" access=\"read\"/>
+    <property name=\"Position\" type=\"x\" access=\"read\"/>
+    <property name=\"Rate\" type=\"d\" access=\"read\"/>
+    <property name=\"MinimumRate\" type=\"d\" access=\"read\"/>
+    <property name=\"MaximumRate\" type=\"d\" access=\"read\"/>
     <property name=\"Metadata\" type=\"a{sv}\" access=\"read\"/>
     <property name=\"CanGoNext\" type=\"b\" access=\"read\"/>
     <property name=\"CanGoPrevious\" type=\"b\" access=\"read\"/>
@@ -136,6 +153,12 @@ ourselves.")
 
 (defvar supersonic-mpris--track-song nil
   "The current track, as `supersonic-provider-track' resolved it, or nil.")
+
+(defvar supersonic-mpris--art-file nil
+  "The cached cover art of the current track, or nil.")
+
+(defvar supersonic-mpris--position-timer nil
+  "Timer keeping the Position property current while playing.")
 
 ;;;
 ;;; Metadata dict construction
@@ -170,7 +193,9 @@ ourselves.")
        (when artist
          (list :dict-entry "xesam:artist" (list :variant (list :array artist))))
        (when duration
-         (list :dict-entry "mpris:length" (list :variant :int64 (* duration 1000000)))))))))
+         (list :dict-entry "mpris:length" (list :variant :int64 (* duration 1000000))))
+       (when supersonic-mpris--art-file
+         (list :dict-entry "mpris:artUrl" (list :variant (concat "file://" supersonic-mpris--art-file)))))))))
 
 (defun supersonic-mpris--set-player-property (property value)
   "Set PROPERTY on the Player interface to VALUE and notify listeners.
@@ -196,7 +221,19 @@ sending PropertiesChanged itself."
        ;; Ignore replies for a track we have since moved on from.
        (when (equal id supersonic-mpris--track-id)
          (setq supersonic-mpris--track-song song)
-         (supersonic-mpris--announce-metadata)))
+         (supersonic-mpris--announce-metadata)
+         ;; The cover, for shells to show: fetched into supersonic's own
+         ;; art cache and handed out as a file URL.
+         (when (and (plist-get song :art) (supersonic-provider-supports-p 'cover-art))
+           (require 'supersonic-art)
+           (let ((size supersonic-now-playing-art-size))
+             (condition-case nil
+                 (progn
+                   (aio-await (supersonic--fetch-art (plist-get song :art) size))
+                   (when (equal id supersonic-mpris--track-id)
+                     (setq supersonic-mpris--art-file (supersonic-art-cache-file (plist-get song :art) size))
+                     (supersonic-mpris--announce-metadata)))
+               (error nil))))))
    (error
     (message "supersonic-mpris: failed to fetch metadata for %s: %s" id err))))
 
@@ -222,15 +259,19 @@ handler for both, since a track change can flip Playing/Paused too
         (if paused
             "Paused"
           "Playing"))
+       (supersonic-mpris--update-position-timer (not paused))
        (unless (equal id supersonic-mpris--track-id)
          (setq supersonic-mpris--track-id id)
          (setq supersonic-mpris--track-song nil)
+         (setq supersonic-mpris--art-file nil)
+         (supersonic-mpris--announce-position 0)
          (supersonic-mpris--announce-metadata)
          (when id
            ;; Defer off whatever called us -- for the mpv backend, its own
            ;; IPC process filter -- so a slow HTTP request never blocks it.
            (run-at-time 0 nil #'supersonic-mpris--fetch-song id))))
    (supersonic-mpris--set-playback-status "Stopped")
+   (supersonic-mpris--update-position-timer nil)
    (when supersonic-mpris--track-id
      (setq supersonic-mpris--track-id nil)
      (setq supersonic-mpris--track-song nil)
@@ -239,6 +280,59 @@ handler for both, since a track change can flip Playing/Paused too
 ;;;
 ;;; org.mpris.MediaPlayer2 (root interface)
 ;;;
+
+;;;
+;;; Position and seeking
+;;;
+
+(defun supersonic-mpris--announce-position (seconds)
+  "Set the Position property to SECONDS.
+Without a PropertiesChanged signal: the spec has clients extrapolate
+the position themselves, told of jumps by the Seeked signal."
+  (dbus-register-property
+   :session supersonic-mpris--bus-name supersonic-mpris--path supersonic-mpris--player-interface "Position"
+   :read (list :int64 (round (* 1000000 (or seconds 0)))) nil t))
+
+(aio-defun
+ supersonic-mpris--refresh-position (&optional seeked)
+ "Read the playback position and announce it; with SEEKED, as a jump."
+ (let ((position (and (supersonic-playback-live-p)
+                      (aio-await (supersonic-playback-status 'position)))))
+   (when (numberp position)
+     (supersonic-mpris--announce-position position)
+     (when seeked
+       (dbus-send-signal :session nil supersonic-mpris--path supersonic-mpris--player-interface
+                         "Seeked" :int64 (round (* 1000000 position)))))))
+
+(defun supersonic-mpris--seeked ()
+  "Tell clients playback jumped.  On `supersonic-playback-position-change-hook'."
+  (ignore (supersonic-mpris--refresh-position t)))
+
+(defun supersonic-mpris--update-position-timer (playing)
+  "Keep Position current every few seconds while PLAYING."
+  (cond
+   ((and playing (not supersonic-mpris--position-timer))
+    (setq supersonic-mpris--position-timer
+          (run-at-time 0 2 (lambda () (ignore (supersonic-mpris--refresh-position))))))
+   ((and (not playing) supersonic-mpris--position-timer)
+    (cancel-timer supersonic-mpris--position-timer)
+    (setq supersonic-mpris--position-timer nil)
+    (ignore (supersonic-mpris--refresh-position)))))
+
+(defun supersonic-mpris--seek (offset)
+  "Handle the MPRIS Seek method: move OFFSET microseconds."
+  (when (supersonic-playback-live-p)
+    (supersonic-playback-seek (/ offset 1000000.0))))
+
+(aio-defun
+ supersonic-mpris--set-position (track-path position)
+ "Handle the MPRIS SetPosition method: go to POSITION microseconds in.
+Ignored unless TRACK-PATH is the current track's, as the spec says."
+ (when (and (supersonic-playback-live-p)
+            (equal track-path (supersonic-mpris--track-object-path supersonic-mpris--track-id)))
+   (let ((now (aio-await (supersonic-playback-status 'position))))
+     (when (numberp now)
+       (supersonic-playback-seek (- (/ position 1000000.0) now))))))
 
 (defun supersonic-mpris--quit ()
   "Handle the MPRIS Quit method: stop playback, never Emacs."
@@ -302,6 +396,17 @@ playerctl trip over anything else."
          t)
         supersonic-mpris--registrations))
 
+(defun supersonic-mpris--register-method-with-args (interface method handler)
+  "Register METHOD on INTERFACE, calling HANDLER with its arguments.
+Replies empty, as `supersonic-mpris--register-method' does."
+  (push (dbus-register-method
+         :session supersonic-mpris--bus-name supersonic-mpris--path interface method
+         (lambda (&rest args)
+           (apply handler args)
+           :ignore)
+         t)
+        supersonic-mpris--registrations))
+
 (defun supersonic-mpris--register-fixed-property (interface property value)
   "Register PROPERTY on INTERFACE with a fixed, never-changing VALUE.
 Passes DONT-REGISTER-SERVICE so this does not itself put the service
@@ -340,6 +445,10 @@ then treat it as broken until restarted."
   (supersonic-mpris--register-method supersonic-mpris--player-interface "Stop" #'supersonic-mpris--stop)
   (supersonic-mpris--register-method supersonic-mpris--player-interface "Next" #'supersonic-mpris--next)
   (supersonic-mpris--register-method supersonic-mpris--player-interface "Previous" #'supersonic-mpris--previous)
+  (supersonic-mpris--register-method-with-args supersonic-mpris--player-interface "Seek" #'supersonic-mpris--seek)
+  (supersonic-mpris--register-method-with-args
+   supersonic-mpris--player-interface "SetPosition"
+   (lambda (track position) (ignore (supersonic-mpris--set-position track position))))
   ;; Player interface: properties.  PlaybackStatus and Metadata are kept
   ;; current via `supersonic-mpris--set-player-property'; the Can* flags are
   ;; fixed.
@@ -353,7 +462,14 @@ then treat it as broken until restarted."
         supersonic-mpris--registrations)
   (dolist (prop '("CanGoNext" "CanGoPrevious" "CanPlay" "CanPause" "CanControl"))
     (supersonic-mpris--register-fixed-property supersonic-mpris--player-interface prop t))
-  (supersonic-mpris--register-fixed-property supersonic-mpris--player-interface "CanSeek" nil)
+  (supersonic-mpris--register-fixed-property supersonic-mpris--player-interface "CanSeek" t)
+  (dolist (rate '("Rate" "MinimumRate" "MaximumRate"))
+    (supersonic-mpris--register-fixed-property supersonic-mpris--player-interface rate 1.0))
+  (push (dbus-register-property
+         :session supersonic-mpris--bus-name supersonic-mpris--path supersonic-mpris--player-interface "Position"
+         :read '(:int64 0) nil t)
+        supersonic-mpris--registrations)
+  (add-hook 'supersonic-playback-position-change-hook #'supersonic-mpris--seeked)
   (add-hook 'supersonic-playback-track-change-hook #'supersonic-mpris--sync)
   (add-hook 'supersonic-playback-state-change-hook #'supersonic-mpris--sync)
   ;; Last, see the docstring.
@@ -365,6 +481,9 @@ then treat it as broken until restarted."
   "Tear down the MPRIS D-Bus service and stop observing the playback facade."
   (remove-hook 'supersonic-playback-track-change-hook #'supersonic-mpris--sync)
   (remove-hook 'supersonic-playback-state-change-hook #'supersonic-mpris--sync)
+  (remove-hook 'supersonic-playback-position-change-hook #'supersonic-mpris--seeked)
+  (supersonic-mpris--update-position-timer nil)
+  (setq supersonic-mpris--art-file nil)
   (dolist (registration supersonic-mpris--registrations)
     (dbus-unregister-object registration))
   (setq supersonic-mpris--registrations nil)

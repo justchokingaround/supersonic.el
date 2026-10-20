@@ -9012,6 +9012,27 @@ the section; the same for lines of one item, like tracks."
     (supersonic-browse-row-start)
     (should (equal '(r 1) (supersonic-tests--browse-at)))))
 
+(ert-deftest supersonic-tests-mpris-metadata-carries-art ()
+  "Metadata hands the cached cover out as a file URL, once there is one."
+  (require 'supersonic-mpris)
+  (let ((supersonic-mpris--track-id "t1")
+        (supersonic-mpris--track-song '(:title "Song" :duration 10))
+        (supersonic-mpris--art-file nil))
+    (should-not (assoc "mpris:artUrl" (mapcar #'cdr (cdr (supersonic-mpris--metadata)))))
+    (setq supersonic-mpris--art-file "/cache/art-x-500")
+    (should (equal '(:variant "file:///cache/art-x-500")
+                   (cadr (assoc "mpris:artUrl" (mapcar #'cdr (cdr (supersonic-mpris--metadata)))))))))
+
+(ert-deftest supersonic-tests-mpris-seek-is-in-microseconds ()
+  "MPRIS Seek offsets are microseconds; the backend seeks in seconds."
+  (require 'supersonic-mpris)
+  (let ((seeks nil))
+    (cl-letf (((symbol-function 'supersonic-playback-live-p) (lambda () t))
+              ((symbol-function 'supersonic-playback-seek) (lambda (s) (push s seeks))))
+      (supersonic-mpris--seek 5000000)
+      (supersonic-mpris--seek -2500000))
+    (should (equal '(5.0 -2.5) (nreverse seeks)))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here
