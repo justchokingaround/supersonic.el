@@ -585,12 +585,17 @@ the accent colour itself; the big play/pause gets a halo instead."
                   (window (get-buffer-window buff t)))
               (let ((top (and window (window-start window))))
                 (save-excursion
-                  (delete-region start end)
-                  (goto-char start)
+                  (delete-region start end))
+                ;; Go to the lyrics' place only once in the window:
+                ;; selecting it sets point to the window's own point.
+                (cl-flet ((insert-at-start ()
+                            (save-excursion
+                              (goto-char start)
+                              (supersonic-player--insert-lyrics))))
                   (if window
                       (with-selected-window window
-                        (with-current-buffer buff (supersonic-player--insert-lyrics)))
-                    (supersonic-player--insert-lyrics)))
+                        (with-current-buffer buff (insert-at-start)))
+                    (insert-at-start)))
                 (when window (set-window-start window top t)))
               (supersonic-browse--index-stops))))))))
 

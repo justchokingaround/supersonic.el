@@ -9086,6 +9086,31 @@ trashed, with tracks no longer found left out."
               (should-not (aio-wait-for (supersonic-local--playlists))))))
       (delete-directory dir t))))
 
+(ert-deftest supersonic-tests-player-lyrics-redraw-in-place ()
+  "New lyrics replace the old ones where they are, wherever point is."
+  (require 'supersonic-player)
+  (with-temp-buffer
+    (rename-buffer supersonic-player-buffer-name t)
+    (let ((buff (current-buffer))
+          (lines '("one" nil "two")))
+      (cl-letf (((symbol-function 'supersonic-player--lyrics-lines) (lambda () lines))
+                ((symbol-function 'supersonic-player--centered-text) (lambda (text) (insert text "\n")))
+                ((symbol-function 'supersonic-browse--index-stops) #'ignore)
+                ((symbol-function 'get-buffer) (lambda (_) buff)))
+        (insert "controls\n")
+        (supersonic-player--insert-lyrics)
+        (insert "after\n")
+        ;; Shown in a window whose point is on the controls, as when one
+        ;; of them has focus.
+        (set-window-buffer (selected-window) buff)
+        (set-window-point (selected-window) 3)
+        (goto-char 3)
+        (setq lines '("ONE" "uno" "TWO"))
+        (save-selected-window
+          (select-window (minibuffer-window))
+          (supersonic-player--lyrics-changed))
+        (should (equal "controls\nONE\nuno\nTWO\nafter\n" (buffer-substring-no-properties (point-min) (point-max))))))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here
