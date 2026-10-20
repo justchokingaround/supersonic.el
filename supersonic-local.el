@@ -735,6 +735,16 @@ NOW-PLAYING is non-nil when it has just started; that is when it counts."
    (delete-file (supersonic-local--playlist-file id) t))
  nil)
 
+(aio-defun
+ supersonic-local--play-queue () "Resolve to the local play queue saved last, or nil."
+ (supersonic-local--read-file (expand-file-name "local-queue.eld" supersonic-cache-path)))
+
+(aio-defun
+ supersonic-local--save-play-queue (ids index position) "Save the local play queue IDS."
+ (supersonic-local--write-file (expand-file-name "local-queue.eld" supersonic-cache-path)
+                               (list :ids ids :current index :position position))
+ nil)
+
 (defun supersonic-local--cache-namespace ()
   "Return the namespace of local ids, which are file names already."
   "local")
@@ -762,6 +772,8 @@ NOW-PLAYING is non-nil when it has just started; that is when it counts."
    (edit-playlist . supersonic-local--edit-playlist)
    (set-playlist-tracks . supersonic-local--set-playlist-tracks)
    (delete-playlist . supersonic-local--delete-playlist)
+   (play-queue . supersonic-local--play-queue)
+   (save-play-queue . supersonic-local--save-play-queue)
    (cache-namespace . supersonic-local--cache-namespace)
    (config-hints . supersonic-local--config-hints)))
 

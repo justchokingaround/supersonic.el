@@ -746,5 +746,25 @@ It is drawn smaller in a narrow or short window."
   "Face of the next lyrics line, on the now-playing page."
   :group 'supersonic-browse)
 
+;;;; Picking up where you left off
+
+(defcustom supersonic-resume-on-start t
+  "Non-nil for `supersonic-resume-mode' to put the saved queue back as it starts.
+Paused where it was; only when nothing is playing yet."
+  :type 'boolean
+  :group 'supersonic)
+
+(defcustom supersonic-resume-interval 30
+  "Seconds between saves of the play queue while it plays."
+  :type 'integer
+  :group 'supersonic)
+
+(defcustom supersonic-resume-max-tracks 300
+  "Most tracks of the queue saved on a Subsonic server.
+Those around the one playing; the request carries every id, so a very
+long queue is cut short."
+  :type 'integer
+  :group 'supersonic)
+
 (provide 'supersonic-custom)
 ;;; supersonic-custom.el ends here

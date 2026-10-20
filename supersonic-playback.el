@@ -56,7 +56,7 @@ between 0.0 and 1.0; `status' takes one of
 
 (defconst supersonic-playback-operations
   (append supersonic-playback-core-operations
-          '(play-index remove move clear shuffle repeat volume))
+          '(play-index remove move clear shuffle repeat volume restore))
   "The playback operations a backend can implement.
 Those of `supersonic-playback-core-operations', plus the queue editing
 and playback mode ones, which a backend is more likely to leave out:
@@ -70,6 +70,9 @@ and playback mode ones, which a backend is more likely to leave out:
   order it had before.
 - `repeat' takes a MODE, nil, `queue' or `track'.
 - `volume' takes a DELTA in percent, which may be negative.
+- `restore' takes track IDS, an INDEX into them and a POSITION in
+  seconds, and makes them the queue, paused at that entry and point,
+  without playing a sound.
 
 A backend may leave operations out; calling one then reports that.")
 
@@ -433,6 +436,13 @@ Interactively SECONDS is the numeric prefix argument."
 (defun supersonic-playback-volume (delta)
   "Change the volume by DELTA percent."
   (supersonic-playback--call 'volume delta))
+
+(defun supersonic-playback-restore (ids index position)
+  "Make IDS the queue, paused at entry INDEX, POSITION seconds in.
+A backend without `restore' plays from that entry instead."
+  (if (alist-get 'restore (gethash supersonic-playback-backend supersonic-playback--backends))
+      (supersonic-playback--call 'restore ids index position)
+    (supersonic-playback-start (nthcdr index ids))))
 
 (defun supersonic-playback--status-now (key)
   "Return the active backend's current KEY, waiting for it."

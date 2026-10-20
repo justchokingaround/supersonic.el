@@ -469,6 +469,35 @@ hundred, the rest are appended."
  (aio-await (supersonic-get-json (supersonic-build-url "/deletePlaylist.view" `(("id" . ,id)))))
  nil)
 
+(aio-defun
+ supersonic-subsonic--play-queue ()
+ "Return a promise resolving to the queue saved on the server, via getPlayQueue."
+ (let* ((data (aio-await (supersonic-get-json (supersonic-build-url "/getPlayQueue.view" nil))))
+        (queue (supersonic-recursive-assoc data '("subsonic-response" "playQueue")))
+        (ids (mapcar #'supersonic-get-id-as-string (assoc-default "entry" queue)))
+        (current (assoc-default "current" queue)))
+   (and ids
+        (list :ids ids
+              :current (or (and current (seq-position ids (format "%s" current))) 0)
+              :position (/ (or (assoc-default "position" queue) 0) 1000.0)))))
+
+(aio-defun
+ supersonic-subsonic--save-play-queue (ids index position)
+ "Save IDS, playing INDEX at POSITION seconds, via savePlayQueue.
+At most `supersonic-resume-max-tracks' around the one playing, keeping
+the URL short."
+ (let* ((start (max 0 (- index 20)))
+        (kept (seq-take (nthcdr start ids) supersonic-resume-max-tracks))
+        (current (nth index ids)))
+   (aio-await
+    (supersonic-get-json
+     (supersonic-build-url
+      "/savePlayQueue.view"
+      (append (supersonic-subsonic--song-params "id" kept)
+              (and current `(("current" . ,current)))
+              `(("position" . ,(number-to-string (round (* 1000 (or position 0))))))))))
+   nil))
+
 (defun supersonic-subsonic--cache-namespace ()
   "Return the Subsonic server's address, `supersonic-host'.
 Ids are only unique per server, so this is what keeps one server's
@@ -504,6 +533,8 @@ cached art and waveforms apart from another's."
    (edit-playlist . supersonic-subsonic--edit-playlist)
    (set-playlist-tracks . supersonic-subsonic--set-playlist-tracks)
    (delete-playlist . supersonic-subsonic--delete-playlist)
+   (play-queue . supersonic-subsonic--play-queue)
+   (save-play-queue . supersonic-subsonic--save-play-queue)
    (cache-namespace . supersonic-subsonic--cache-namespace)
    (config-hints . supersonic-subsonic--config-hints)))
 

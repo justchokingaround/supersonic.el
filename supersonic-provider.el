@@ -69,6 +69,7 @@
     podcasts podcast-episodes add-podcast download-podcast-episode
     stream-url scrobble cover-art cover-art-url lyrics
     playlists playlist-tracks create-playlist edit-playlist set-playlist-tracks delete-playlist
+    play-queue save-play-queue
     cache-namespace config-hints)
   "The library operations a provider can implement.
 All but `scrobble', `cache-namespace' and `config-hints' return a
@@ -138,6 +139,10 @@ promise.
   and resolves once those are its tracks, in that order -- how tracks
   are reordered.
 - `delete-playlist' takes a playlist id and resolves once it is gone.
+- `play-queue' takes no arguments and resolves to the play queue saved
+  last, as (:ids IDS :current INDEX :position SECONDS), or nil.
+- `save-play-queue' takes IDS, the INDEX of the one playing and the
+  POSITION in it in seconds, and resolves once they are saved.
 - `cache-namespace' takes no arguments and returns a string naming
   the library this provider is connected to, such as a server
   address.  See `supersonic-provider-cache-name'.
@@ -335,6 +340,16 @@ CHANGES is a plist of `:name', `:add' and `:remove', see
  supersonic-provider-delete-playlist (playlist-id)
  "Return a promise resolving once PLAYLIST-ID is deleted."
  (aio-await (supersonic-provider--call 'delete-playlist playlist-id)))
+
+(aio-defun
+ supersonic-provider-play-queue ()
+ "Return a promise resolving to the play queue saved last, or nil."
+ (aio-await (supersonic-provider--call 'play-queue)))
+
+(aio-defun
+ supersonic-provider-save-play-queue (ids index position)
+ "Return a promise resolving once IDS, playing INDEX at POSITION, are saved."
+ (aio-await (supersonic-provider--call 'save-play-queue ids index position)))
 
 (defun supersonic-provider-cache-name (id)
   "Return a file name for ID that is safe, bounded and unique to the library.

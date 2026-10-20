@@ -193,10 +193,11 @@ All are asked for at once, not one after the other."
    (nreverse urls)))
 
 (aio-defun
- supersonic-mpv--load-after (previous ids flags then)
+ supersonic-mpv--load-after (previous ids flags then &optional before)
  "Load IDS into mpv once PREVIOUS, the load before, is done.
 FLAGS is the `loadfile' flag for the first of IDS consed onto the flag
-for the rest; THEN is called with no arguments once all are loaded.
+for the rest; THEN is called with no arguments once all are loaded,
+and BEFORE, if given, once mpv runs and before anything is loaded.
 Resolves the stream URLs first, so a failure leaves mpv untouched.
 Failures are reported rather than signalled: nobody awaits this, and
 the load after it must not see it reject."
@@ -207,6 +208,8 @@ the load after it must not see it reject."
            (aio-await previous))
          (when (= generation supersonic-mpv--load-generation)
            (supersonic-mpv-ensure-running)
+           (when before
+             (funcall before))
            (supersonic--mpv-load-track (car ids) (car urls) (car flags))
            (cl-mapc
             (lambda (id url) (supersonic--mpv-load-track id url (cdr flags)))
@@ -215,11 +218,29 @@ the load after it must not see it reject."
      (error
       (message "[Supersonic] Failed to play: %s" (error-message-string err))))))
 
-(defun supersonic-mpv--load (ids flags then)
+(defun supersonic-mpv--load (ids flags then &optional before)
   "Queue up loading IDS into mpv behind every load requested before.
-FLAGS and THEN are as for `supersonic-mpv--load-after'.  Returns a
-promise resolving once the load is done or has failed."
-  (setq supersonic-mpv--pending-load (supersonic-mpv--load-after supersonic-mpv--pending-load ids flags then)))
+FLAGS, THEN and BEFORE are as for `supersonic-mpv--load-after'.
+Returns a promise resolving once the load is done or has failed."
+  (setq supersonic-mpv--pending-load
+        (supersonic-mpv--load-after supersonic-mpv--pending-load ids flags then before)))
+
+(defun supersonic-mpv-restore (ids index position)
+  "Replace the mpv queue with IDS, paused at entry INDEX, POSITION seconds in.
+For picking up where one left off: pause and the start position are
+set before anything loads, so not a sound is played."
+  (when ids
+    (supersonic-mpv--load
+     ids '("replace" . "append")
+     (lambda ()
+       (supersonic-mpv-command "playlist-play-index" index)
+       ;; `start' would apply to every later track too.
+       (run-at-time 5 nil (lambda () (supersonic-mpv-command "set_property" "start" "none")))
+       (run-hooks 'supersonic-playback-track-change-hook))
+     (lambda ()
+       (supersonic-mpv-command "set_property" "pause" t)
+       (supersonic-mpv-command "set_property" "start" (format "+%s" (max 0 (or position 0)))))))
+  nil)
 
 (defun supersonic-mpv-start (ids)
   "Replace the current mpv queue with IDS and start playing.
@@ -448,7 +469,8 @@ Remembered even while mpv is not running, for the next one started."
    (clear . supersonic-mpv-clear)
    (shuffle . supersonic-mpv-shuffle)
    (repeat . supersonic-mpv-repeat)
-   (volume . supersonic-mpv-volume))
+   (volume . supersonic-mpv-volume)
+   (restore . supersonic-mpv-restore))
  :requires '(stream-url))
 
 (provide 'supersonic-mpv)

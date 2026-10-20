@@ -9130,6 +9130,62 @@ of alternatives, and nothing for what has no key."
                       ("unbound" supersonic-browse-reload))
                     (list map) "5")))))
 
+(ert-deftest supersonic-tests-mpv-restore-is-silent ()
+  "Restoring pauses mpv and sets the start position before loading
+anything, then jumps to the entry playing."
+  (let ((commands nil))
+    (cl-letf (((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (push args commands) t))
+              ((symbol-function 'supersonic-mpv-ensure-running) #'ignore)
+              ((symbol-function 'supersonic-mpv--stream-urls)
+               (aio-lambda (ids) (mapcar (lambda (id) (concat "url-" id)) ids)))
+              (supersonic-mpv--pending-load nil)
+              (supersonic--playlist (make-hash-table))
+              (supersonic-mpv--entry-counter 0)
+              (supersonic-playback-track-change-hook nil))
+      (aio-wait-for (supersonic-mpv--load-after nil '("a" "b" "c") '("replace" . "append")
+                                                (lambda () (supersonic-mpv-command "playlist-play-index" 1))
+                                                (lambda ()
+                                                  (supersonic-mpv-command "set_property" "pause" t)
+                                                  (supersonic-mpv-command "set_property" "start" "+42")))))
+    (should (equal '(("set_property" "pause" t) ("set_property" "start" "+42")
+                     ("loadfile" "url-a" "replace") ("loadfile" "url-b" "append") ("loadfile" "url-c" "append")
+                     ("playlist-play-index" 1))
+                   (nreverse commands)))))
+
+(ert-deftest supersonic-tests-subsonic-play-queue ()
+  "The server's play queue reads into ids, the index playing and seconds;
+saving sends ids around the one playing, the current id and milliseconds."
+  (let ((url nil)
+        (supersonic-resume-max-tracks 300))
+    (cl-letf (((symbol-function 'supersonic-build-url) (lambda (endpoint query) (cons endpoint query)))
+              ((symbol-function 'supersonic-get-json)
+               (aio-lambda (u)
+                 (setq url u)
+                 '(("subsonic-response"
+                    ("playQueue" ("current" . "t2") ("position" . 61500)
+                     ("entry" (("id" . "t1")) (("id" . "t2")) (("id" . "t3")))))))))
+      (should (equal '(:ids ("t1" "t2" "t3") :current 1 :position 61.5)
+                     (aio-wait-for (supersonic-subsonic--play-queue))))
+      (aio-wait-for (supersonic-subsonic--save-play-queue '("t1" "t2" "t3") 1 61.5))
+      (should (equal '("/savePlayQueue.view" ("id" . "t1") ("id" . "t2") ("id" . "t3")
+                       ("current" . "t2") ("position" . "61500"))
+                     url)))))
+
+(ert-deftest supersonic-tests-resume-saves-what-plays ()
+  "Saving hands the provider the queue's ids, the index playing and the position."
+  (require 'supersonic-resume)
+  (let ((saved nil)
+        (supersonic-resume--restoring nil))
+    (supersonic-tests--with-backend
+     `((live-p . ,(lambda () t))
+       (queue . ,(aio-lambda () '((:track-id "a") (:track-id "b" :current t))))
+       (status . ,(aio-lambda (key) (and (eq key 'position) 12.5))))
+     (cl-letf (((symbol-function 'supersonic-provider-supports-p) (lambda (&rest _) t))
+               ((symbol-function 'supersonic-provider-save-play-queue)
+                (aio-lambda (&rest args) (setq saved args))))
+       (aio-wait-for (supersonic-resume-save))))
+    (should (equal '(("a" "b") 1 12.5) saved))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here
