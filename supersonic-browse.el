@@ -36,13 +36,16 @@
 ;;
 ;; Keys, the same on every page:
 ;;
-;;   arrows, n p  move between items      RET  open / play from here
+;;   arrows, C-n C-p  move between items   RET  open / play from here
 ;;   TAB S-TAB    next / previous section  P    play
 ;;   l r          back / forward           s    shuffle
 ;;   h            home                     a    add to the queue
-;;   /            search                   g    reload
+;;   /            search                   A    add to a playlist
+;;   n p          next / previous track    f b  seek
+;;   ?            every key, as a cheatsheet
 ;;
-;; plus every supersonic buffer's playback keys (SPC, < >, [ ], ...).
+;; Whatever moves the cursor in your setup -- C-f, M-f, a modal
+;; package's motions -- moves between items too.
 
 ;;; Code:
 
@@ -683,7 +686,7 @@ of its own, so they take focus like any other."
      (supersonic-browse-shuffle . "shuffle") (supersonic-browse-enqueue . "queue")
      (supersonic-browse-add-to-playlist . "playlist")
      (supersonic-browse-next-section . "section") (supersonic-browse-back . "back")
-     (supersonic-browse-search . "search") (describe-mode . "keys"))
+     (supersonic-browse-search . "search") (supersonic-cheatsheet . "all keys"))
    "   "))
 
 (defun supersonic-browse--title (title &optional subtitle)
@@ -1611,6 +1614,224 @@ TYPE is one of `supersonic-provider-album-list-types'."
     (message "Saved the queue, %s, as %s" (supersonic-browse--plural (length ids) "song") name)))
 
 ;;;
+;;; Cheatsheet
+;;;
+
+(defconst supersonic-cheatsheet-buffer-name "*supersonic-keys*"
+  "Name of the cheatsheet's buffer.")
+
+(defconst supersonic-cheatsheet--sections
+  '(("Playback" all
+     ("play / pause" supersonic-toggle-playing)
+     ("next track" supersonic-skip-track)
+     ("previous track" supersonic-prev-track)
+     ("seek forward" supersonic-seek-forward)
+     ("seek back" supersonic-seek-back)
+     ("louder" (:or supersonic-player-volume-up supersonic-volume-up))
+     ("quieter" (:or supersonic-player-volume-down supersonic-volume-down))
+     ("shuffle" (:or supersonic-player-shuffle supersonic-toggle-shuffle))
+     ("repeat" (:or supersonic-player-repeat supersonic-cycle-repeat)))
+    ("Move" all
+     ("up / down" supersonic-browse-up supersonic-browse-down)
+     ("left / right" supersonic-browse-previous supersonic-browse-next)
+     ("start / end of line" supersonic-browse-row-start supersonic-browse-row-end)
+     ("next / previous section" supersonic-browse-next-section supersonic-browse-previous-section))
+    ("On an item" browser
+     ("open, or play from here" supersonic-browse-open)
+     ("play" supersonic-browse-play)
+     ("shuffle" supersonic-browse-shuffle)
+     ("add to the queue" supersonic-browse-enqueue)
+     ("add to a playlist" supersonic-browse-add-to-playlist))
+    ("Pages" browser
+     ("back / forward" supersonic-browse-back supersonic-browse-forward)
+     ("home" supersonic-browse-home)
+     ("search" supersonic-browse-search)
+     ("reload" supersonic-browse-reload))
+    ("A playlist's page" playlist
+     ("remove the song" supersonic-browse-playlist-remove)
+     ("move it up / down" supersonic-browse-playlist-move-up supersonic-browse-playlist-move-down)
+     ("rename the playlist" supersonic-browse-playlist-rename)
+     ("delete the playlist" supersonic-browse-playlist-delete))
+    ("Now playing" player
+     ("go to the artist" supersonic-player-goto-artist)
+     ("go to the album" supersonic-player-goto-album)
+     ("back to the library" supersonic-player-library)
+     ("reload" supersonic-player-refresh))
+    ("From anywhere" prefix
+     ("library" supersonic-browse)
+     ("now playing" (:or supersonic-player supersonic-show-now-playing))
+     ("search" (:or supersonic-browse-search supersonic-search-read))
+     ("artists" supersonic-browse-artists)
+     ("playlists" supersonic-browse-playlists)
+     ("play queue" supersonic-show-queue)
+     ("save the queue as a playlist" supersonic-save-queue-as-playlist)
+     ("lyrics" supersonic-lyrics)
+     ("lyrics in the echo area" supersonic-lyrics-toggle-echo-area)
+     ("lyrics translations" supersonic-lyrics-toggle-translation)
+     ("local files / server" supersonic-local-toggle)
+     ("everything else" supersonic)))
+  "What the cheatsheet lists: (TITLE WHERE (LABEL COMMAND...)...).
+WHERE says when a section applies: `all', `browser' (the library
+browser, not the now-playing page), `playlist' (a playlist's page),
+`player' (the now-playing page) or `prefix' (the keys under
+`supersonic-command-map', wherever that is bound).  An entry with
+several commands shows the keys of each, joined by \"/\"; one of
+them may be (:or COMMAND...), the first of which with a key counts.
+An entry none of whose commands has a key is left out.")
+
+(defun supersonic-cheatsheet--remapped-from (command map)
+  "Return the commands MAP remaps to COMMAND."
+  (let ((remaps (lookup-key map [remap]))
+        (from nil))
+    (when (keymapp remaps)
+      (map-keymap (lambda (original target) (when (eq target command) (push original from))) remaps))
+    from))
+
+(defun supersonic-cheatsheet--keys (command maps)
+  "Return the keys running COMMAND in MAPS, as short strings.
+Keys of commands MAPS remap to COMMAND count too, looked up in the
+modal editing package's own map if there is one -- that is where the
+motions people use live."
+  (let* ((modal (and (boundp 'xah-fly-command-map) (list (symbol-value 'xah-fly-command-map))))
+         (keys (append (where-is-internal command maps)
+                       (mapcan (lambda (original)
+                                 (append (where-is-internal original (append modal maps))))
+                               (seq-mapcat (lambda (map) (supersonic-cheatsheet--remapped-from command map)) maps)))))
+    ;; Shortest first: "l" says more at a glance than "M-<left>".
+    (seq-take
+     (sort (delete-dups
+            (delq nil (mapcar (lambda (key)
+                                (let ((description (key-description key)))
+                                  (unless (or (eq (aref key 0) 'remap) (memq (aref key 0) '(menu-bar tool-bar))
+                                              (string-match-p "mouse\\|wheel" description))
+                                    description)))
+                              keys)))
+           (lambda (a b) (< (length a) (length b))))
+     3)))
+
+(defun supersonic-cheatsheet--prefix ()
+  "Return the key `supersonic-command-map' is on, as a string, or nil."
+  (let* ((maps (append (and (boundp 'xah-fly-command-map) (list (symbol-value 'xah-fly-command-map)))
+                       (list global-map)))
+         (key (car (where-is-internal 'supersonic-command-map maps))))
+    (and key (key-description key))))
+
+(defun supersonic-cheatsheet--entries (section maps prefix)
+  "Return SECTION's entries as (KEYS . LABEL) with keys found in MAPS.
+PREFIX is put before the keys of a `prefix' section."
+  (delq nil
+        (mapcar (lambda (entry)
+                  (let* ((found (delq nil (mapcar (lambda (command)
+                                                    (if (eq (car-safe command) :or)
+                                                        (seq-some (lambda (c) (car (supersonic-cheatsheet--keys c maps)))
+                                                                  (cdr command))
+                                                      (car (supersonic-cheatsheet--keys command maps))))
+                                                  (cdr entry))))
+                         (found (if (eq (nth 1 section) 'prefix)
+                                    (mapcar (lambda (key) (concat prefix " " key)) found)
+                                  found)))
+                    (and found (cons (seq-take (delete-dups found) 2) (car entry)))))
+                (nthcdr 2 section))))
+
+(defun supersonic-cheatsheet--chip (key)
+  "Return KEY drawn as a key cap."
+  (propertize (concat " " key " ") 'face 'supersonic-cheatsheet-key))
+
+(defun supersonic-cheatsheet--render (from)
+  "Lay the cheatsheet out for the buffer FROM it was asked for in."
+  (let* ((inhibit-read-only t)
+         (mode (buffer-local-value 'major-mode from))
+         (page (buffer-local-value 'supersonic-browse--page from))
+         (player (provided-mode-derived-p mode 'supersonic-player-mode))
+         (browser (and (provided-mode-derived-p mode 'supersonic-browse-mode) (not player)))
+         (maps (with-current-buffer from (current-active-maps)))
+         (prefix (or (supersonic-cheatsheet--prefix) "M-x supersonic-command-map"))
+         (prefix-maps (list supersonic-command-map))
+         (blocks
+          (delq nil
+                (mapcar
+                 (lambda (section)
+                   (let ((entries (pcase (nth 1 section)
+                                    ('all (supersonic-cheatsheet--entries section maps prefix))
+                                    ('browser (and browser (supersonic-cheatsheet--entries section maps prefix)))
+                                    ('playlist (and browser (eq (plist-get page :kind) 'playlist)
+                                                    (supersonic-cheatsheet--entries section maps prefix)))
+                                    ('player (and player (supersonic-cheatsheet--entries section maps prefix)))
+                                    ('prefix (supersonic-cheatsheet--entries section prefix-maps prefix)))))
+                     (and entries (cons (car section) entries))))
+                 supersonic-cheatsheet--sections)))
+         (width (window-body-width (get-buffer-window (current-buffer) t) t))
+         (key-width (* 13 (frame-char-width)))
+         (column-width (+ key-width (* 26 (frame-char-width))))
+         (columns (max 1 (min (length blocks) (/ (- width (* 2 supersonic-browse-margin)) column-width))))
+         (heights (make-vector columns 0))
+         (placed (make-vector columns nil)))
+    ;; Each section into the shortest column so far.
+    (dolist (block blocks)
+      (let ((shortest (seq-position (append heights nil) (seq-min heights))))
+        (aset placed shortest (append (aref placed shortest) (list block)))
+        (aset heights shortest (+ (aref heights shortest) (length block) 2))))
+    (erase-buffer)
+    (insert (propertize "\n" 'line-height 1.2)
+            (supersonic-browse--space supersonic-browse-margin)
+            (propertize "Keys" 'face 'supersonic-browse-heading)
+            "   " (propertize (substitute-command-keys "\\<supersonic-cheatsheet-mode-map>\\[supersonic-cheatsheet] or \\[quit-window] closes this")
+                              'face 'supersonic-browse-hint)
+            (propertize "\n" 'line-height 1.6))
+    (let ((lines (make-vector columns nil)))
+      (dotimes (c columns)
+        (dolist (block (aref placed c))
+          (aset lines c (append (aref lines c)
+                                (list (cons 'heading (car block)))
+                                (mapcar (lambda (entry) (cons 'entry entry)) (cdr block))
+                                (list (cons 'gap nil))))))
+      (dotimes (row (seq-max (mapcar #'length lines)))
+        (dotimes (c columns)
+          (let ((line (nth row (aref lines c)))
+                (x (+ supersonic-browse-margin (* c column-width))))
+            (pcase (car line)
+              ('heading (insert (supersonic-browse--align x) (propertize (cdr line) 'face 'supersonic-browse-trail-current)))
+              ('entry (insert (supersonic-browse--align x)
+                              (mapconcat #'supersonic-cheatsheet--chip (cadr line) (propertize " / " 'face 'shadow))
+                              (supersonic-browse--align (+ x key-width))
+                              (propertize (cddr line) 'face 'default))))))
+        (insert (propertize "\n" 'line-height 1.35))))
+    (goto-char (point-min))))
+
+;;;###autoload
+(defun supersonic-cheatsheet ()
+  "Show the keys of supersonic that apply here; again, hide them.
+The keys are read off the keymaps, so they are the ones bound."
+  (interactive)
+  (let ((shown (get-buffer-window supersonic-cheatsheet-buffer-name)))
+    (if shown
+        (quit-window nil shown)
+      (let ((from (current-buffer))
+            (buff (get-buffer-create supersonic-cheatsheet-buffer-name)))
+        (with-current-buffer buff
+          (unless (derived-mode-p 'supersonic-cheatsheet-mode)
+            (supersonic-cheatsheet-mode)))
+        (let ((window (display-buffer buff '((display-buffer-reuse-window display-buffer-in-side-window)
+                                             (side . bottom) (window-height . 0.42)))))
+          (with-current-buffer buff
+            (with-selected-window window
+              (supersonic-cheatsheet--render from))
+            (fit-window-to-buffer window (floor (* 0.6 (frame-height (window-frame window)))))))))))
+
+(defvar supersonic-cheatsheet-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "?") #'supersonic-cheatsheet)
+    (define-key map (kbd "q") #'quit-window)
+    map)
+  "Keymap for `supersonic-cheatsheet-mode'.")
+
+(define-derived-mode supersonic-cheatsheet-mode special-mode "Supersonic Keys"
+  "Major mode of the cheatsheet, see `supersonic-cheatsheet'."
+  (setq-local truncate-lines t
+              cursor-type nil)
+  (setq-local global-hl-line-mode nil))
+
+;;;
 ;;; The mode
 ;;;
 
@@ -1657,11 +1878,13 @@ TYPE is one of `supersonic-provider-album-list-types'."
     (define-key map (kbd "D") #'supersonic-browse-playlist-delete)
     (define-key map (kbd "/") #'supersonic-browse-search)
     (define-key map (kbd "g") #'supersonic-browse-reload)
-    (define-key map (kbd "?") #'describe-mode)
-    (define-key map (kbd "n") #'supersonic-browse-down)
-    (define-key map (kbd "p") #'supersonic-browse-up)
-    (define-key map (kbd "f") #'supersonic-browse-next)
-    (define-key map (kbd "b") #'supersonic-browse-previous)
+    ;; The same transport keys as everywhere in supersonic; moving
+    ;; between items is for the arrows and whatever moves the cursor.
+    (define-key map (kbd "n") #'supersonic-skip-track)
+    (define-key map (kbd "p") #'supersonic-prev-track)
+    (define-key map (kbd "f") #'supersonic-seek-forward)
+    (define-key map (kbd "b") #'supersonic-seek-back)
+    (define-key map (kbd "?") #'supersonic-cheatsheet)
     (define-key map (kbd "<right>") #'supersonic-browse-next)
     (define-key map (kbd "<left>") #'supersonic-browse-previous)
     (define-key map (kbd "<down>") #'supersonic-browse-down)

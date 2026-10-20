@@ -691,6 +691,12 @@ a row the provider cannot fill, or that is empty, is left out."
   "Face of the current page in the browser's trail."
   :group 'supersonic-browse)
 
+(defface supersonic-cheatsheet-key
+  '((t :inherit (bold supersonic-browse-accent header-line)
+       :box (:line-width (6 . 2) :style flat-button)))
+  "Face of a key cap on the cheatsheet."
+  :group 'supersonic-browse)
+
 (defface supersonic-browse-hint
   '((t :inherit shadow))
   "Face of the key hints in the browser."

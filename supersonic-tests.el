@@ -9111,6 +9111,25 @@ trashed, with tracks no longer found left out."
           (supersonic-player--lyrics-changed))
         (should (equal "controls\nONE\nuno\nTWO\nafter\n" (buffer-substring-no-properties (point-min) (point-max))))))))
 
+(ert-deftest supersonic-tests-cheatsheet-reads-the-keymaps ()
+  "The cheatsheet shows the keys actually bound: the shortest first,
+remapped motions under the keys of what they replace, the first bound
+of alternatives, and nothing for what has no key."
+  (require 'supersonic-browse)
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "M-<left>") #'supersonic-browse-back)
+    (define-key map (kbd "l") #'supersonic-browse-back)
+    (define-key map [remap next-line] #'supersonic-browse-down)
+    (define-key map (kbd "C-n") #'next-line)
+    (define-key map (kbd "=") #'supersonic-volume-up)
+    (should (equal '("l" "M-<left>") (supersonic-cheatsheet--keys 'supersonic-browse-back (list map))))
+    (should (equal '("C-n") (supersonic-cheatsheet--keys 'supersonic-browse-down (list map))))
+    (should (equal '((("l") . "back") (("=") . "louder"))
+                   (supersonic-cheatsheet--entries
+                    '("S" all ("back" supersonic-browse-back) ("louder" (:or supersonic-player-volume-up supersonic-volume-up))
+                      ("unbound" supersonic-browse-reload))
+                    (list map) "5")))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here
