@@ -68,6 +68,7 @@ tracks after the current one as (QUEUE-INDEX . TRACK).")
 (defvar-local supersonic-player--timer nil "Timer moving the progress bar.")
 (defvar-local supersonic-player--generation 0 "Bumped per refresh, so stale ones are dropped.")
 (defvar-local supersonic-player--width nil "Window width the page was laid out for.")
+(defvar-local supersonic-player--shown-track nil "Id of the track the page was last laid out for.")
 
 ;;;
 ;;; Icons
@@ -97,7 +98,9 @@ Drawn on a 24 unit grid, scaled."
     group))
 
 (defun supersonic-player--control-image (name on)
-  "Return the display spec of transport control NAME, ringed if ON."
+  "Return the display spec of transport control NAME, glowing if ON.
+In focus, a control sits on a soft glow of the accent colour and takes
+the accent colour itself; the big play/pause gets a halo instead."
   (let* ((state supersonic-player--state)
          (big (eq name 'toggle))
          (size (if big 76 56))
@@ -108,29 +111,30 @@ Drawn on a 24 unit grid, scaled."
                    ('shuffle (plist-get state :shuffle))
                    ('repeat (plist-get state :repeat))))
          (ink (cond (big (supersonic-browse--bg))
-                    (active accent)
+                    ((or on active) accent)
                     (t (supersonic-browse--fg)))))
-    (cond
-     (big (dom-append-child svg (dom-node 'circle `((cx . ,r) (cy . ,r) (r . ,(- r 4)) (fill . ,accent)))))
-     (on (dom-append-child svg (dom-node 'circle `((cx . ,r) (cy . ,r) (r . ,(- r 3))
-                                                   (fill . ,(supersonic-browse--blend accent (supersonic-browse--bg) 0.22)))))))
     (when on
-      (dom-append-child svg (dom-node 'circle `((cx . ,r) (cy . ,r) (r . ,(- r 1.5)) (fill . "none")
-                                                (stroke . ,(if big (supersonic-browse--fg) accent)) (stroke-width . 3)))))
+      (let ((glow (dom-node 'radialGradient '((id . "glow")))))
+        (dom-append-child glow (dom-node 'stop `((offset . ,(if big "0.72" "0.55")) (stop-color . ,accent)
+                                                 (stop-opacity . ,(if big "0.75" "0.28")))))
+        (dom-append-child glow (dom-node 'stop `((offset . "1") (stop-color . ,accent) (stop-opacity . "0"))))
+        (dom-append-child svg glow)
+        (dom-append-child svg (dom-node 'circle `((cx . ,r) (cy . ,r) (r . ,r) (fill . "url(#glow)"))))))
+    (when big
+      (dom-append-child svg (dom-node 'circle `((cx . ,r) (cy . ,r) (r . ,(- r 9)) (fill . ,accent)))))
     (let ((icon (pcase name
                   ('toggle (if (plist-get state :paused) 'play 'pause))
                   (_ name)))
-          (glyph (if big 32 24)))
+          (glyph (cond (big 30) (on 26) (t 24))))
       (dom-append-child svg (supersonic-player--icon icon (- r (/ glyph 2.0) (if (and big (plist-get state :paused)) -1 0))
                                                      (- r (/ glyph 2.0)) glyph ink)))
     (when active
       (dom-append-child svg (dom-node 'circle `((cx . ,r) (cy . ,(- size 7)) (r . 2.5) (fill . ,accent)))))
-    (when (eq (plist-get state :repeat) 'track)
-      (when (eq name 'repeat)
-        (dom-append-child svg (dom-node 'text `((x . ,r) (y . ,(+ r 4)) (text-anchor . "middle")
-                                                (font-family . ,(supersonic-browse--font-family))
-                                                (font-size . 10) (font-weight . "bold") (fill . ,accent))
-                                        "1"))))
+    (when (and (eq name 'repeat) (eq (plist-get state :repeat) 'track))
+      (dom-append-child svg (dom-node 'text `((x . ,r) (y . ,(+ r 4)) (text-anchor . "middle")
+                                              (font-family . ,(supersonic-browse--font-family))
+                                              (font-size . 10) (font-weight . "bold") (fill . ,accent))
+                                      "1")))
     (svg-image svg :ascent 'center :scale 1)))
 
 ;;;
@@ -378,6 +382,7 @@ Drawn on a 24 unit grid, scaled."
 (defun supersonic-player--render-here ()
   "Lay the page out anew, in the selected window."
   (let* ((inhibit-read-only t)
+         (start (window-start (supersonic-browse--window)))
          (selected (or supersonic-browse--selected '(button toggle)))
          (state supersonic-player--state)
          (track (plist-get state :track))
@@ -446,8 +451,14 @@ Drawn on a 24 unit grid, scaled."
     (supersonic-browse--index-stops)
     (goto-char (let ((i (or (supersonic-browse--key-index selected) (supersonic-browse--key-index '(button toggle)) 0)))
                  (if (< i (supersonic-browse--stop-count)) (aref supersonic-browse--stops i) (point-min))))
-    (when (get-buffer-window (current-buffer))
-      (set-window-start (get-buffer-window (current-buffer)) (point-min) t))
+    ;; Back to the top for a new track only: a pause or a seek must not
+    ;; scroll away from where one was looking.
+    (let ((window (get-buffer-window (current-buffer) t)))
+      (when window
+        (if (equal (plist-get state :track-id) supersonic-player--shown-track)
+            (set-window-start window (min start (point-max)) t)
+          (set-window-start window (point-min) t))))
+    (setq supersonic-player--shown-track (plist-get state :track-id))
     (supersonic-browse--update-focus)
     (supersonic-player--fetch-art)
     (supersonic-player--update-timer)))
@@ -571,13 +582,15 @@ Drawn on a 24 unit grid, scaled."
             (let ((end (or (text-property-not-all start (point-max) 'supersonic-player-lyrics t) (point-max)))
                   (inhibit-read-only t)
                   (window (get-buffer-window buff t)))
-              (save-excursion
-                (delete-region start end)
-                (goto-char start)
-                (if window
-                    (with-selected-window window
-                      (with-current-buffer buff (supersonic-player--insert-lyrics)))
-                  (supersonic-player--insert-lyrics)))
+              (let ((top (and window (window-start window))))
+                (save-excursion
+                  (delete-region start end)
+                  (goto-char start)
+                  (if window
+                      (with-selected-window window
+                        (with-current-buffer buff (supersonic-player--insert-lyrics)))
+                    (supersonic-player--insert-lyrics)))
+                (when window (set-window-start window top t)))
               (supersonic-browse--index-stops))))))))
 
 (defun supersonic-player--window-changed (window)

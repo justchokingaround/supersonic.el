@@ -971,7 +971,8 @@ window's frame draws it, and loads finish in process callbacks."
          ((and shape title)
           (overlay-put supersonic-browse--title-overlay 'face '(:inherit (supersonic-browse-accent bold)))
           (move-overlay supersonic-browse--title-overlay (car title) (cdr title)))
-         ((memq (car-safe key) '(button more))
+         ((and (memq (car-safe key) '(button more))
+               (not (get-text-property pos 'supersonic-browse-image-function)))
           ;; A button or link lights up as a whole.
           (overlay-put supersonic-browse--title-overlay 'face
                        `(:background ,(supersonic-browse--accent) :foreground ,(supersonic-browse--bg)
@@ -1007,13 +1008,26 @@ window's frame draws it, and loads finish in process callbacks."
 
 (defun supersonic-browse--post-command ()
   "Keep the focus shown where point is, after every command."
-  (when (and (eq major-mode 'supersonic-browse-mode)
+  (when (and (derived-mode-p 'supersonic-browse-mode)
+             ;; After a scroll, point is wherever Emacs had to put it to
+             ;; keep it in view; moving it to an item off screen would
+             ;; scroll right back.
+             (not (supersonic-browse--scroll-command-p this-command))
              (not (get-text-property (point) 'supersonic-browse-focus))
              (get-text-property (point) 'supersonic-browse-key))
     ;; Clicked or moved onto a name: the tile it names takes focus.
-    (let ((i (supersonic-browse--key-index (get-text-property (point) 'supersonic-browse-key))))
-      (when i (goto-char (aref supersonic-browse--stops i)))))
+    (let* ((i (supersonic-browse--key-index (get-text-property (point) 'supersonic-browse-key)))
+           (pos (and i (aref supersonic-browse--stops i))))
+      (when (and pos (pos-visible-in-window-p pos))
+        (goto-char pos))))
   (supersonic-browse--update-focus))
+
+(defun supersonic-browse--scroll-command-p (command)
+  "Return non-nil if COMMAND scrolls rather than moves."
+  (and (symbolp command)
+       (or (memq command '(mwheel-scroll scroll-up-command scroll-down-command scroll-up scroll-down
+                                         scroll-other-window recenter-top-bottom))
+           (string-match-p "scroll" (symbol-name command)))))
 
 (defun supersonic-browse-next ()
   "Focus the next item."
