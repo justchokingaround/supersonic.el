@@ -367,7 +367,8 @@ the accent colour itself; the big play/pause gets a halo instead."
      (let ((key (where-is-internal (car pair) supersonic-player-mode-map t)))
        (if key (concat (key-description key) " " (cdr pair)) "")))
    '((supersonic-toggle-playing . "play/pause") (supersonic-skip-track . "next")
-     (supersonic-seek-forward . "seek") (supersonic-player-goto-artist . "artist")
+     (supersonic-prev-track . "prev") (supersonic-seek-forward . "seek")
+     (supersonic-player-goto-artist . "artist")
      (supersonic-player-goto-album . "album") (supersonic-player-library . "library"))
    "   "))
 
@@ -676,6 +677,13 @@ the accent colour itself; the big play/pause gets a halo instead."
 
 (defvar supersonic-player-mode-map
   (let ((map (make-sparse-keymap)))
+    ;; Transport on the same keys as everywhere else in supersonic: n p
+    ;; next/previous track, f b seek.  Moving between the controls is
+    ;; what the arrows (and whatever moves the cursor) are for.
+    (define-key map (kbd "n") #'supersonic-skip-track)
+    (define-key map (kbd "p") #'supersonic-prev-track)
+    (define-key map (kbd "f") #'supersonic-seek-forward)
+    (define-key map (kbd "b") #'supersonic-seek-back)
     (define-key map (kbd "s") #'supersonic-player-shuffle)
     (define-key map (kbd "z") #'supersonic-player-shuffle)
     (define-key map (kbd "R") #'supersonic-player-repeat)
