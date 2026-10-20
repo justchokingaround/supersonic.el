@@ -221,33 +221,44 @@ At X and Y, 0 by default.  FILE is resolved against the image's
 
 (defun supersonic-browse--tile-image (item shape selected)
   "Return the display spec of ITEM's tile, a SHAPE, lifted out if SELECTED.
-A tile not in focus draws its art slightly inset; the one in focus
-fills the tile, ringed in the accent colour, with a play badge."
+A tile not in focus draws its art inset; the one in focus draws it
+larger, glowing in the accent colour around its edges, with a play
+badge."
   (let* ((size supersonic-browse-tile-size)
          (file (supersonic-browse--art-file item (* 2 size)))
          (cache-key (list (plist-get item :id) shape selected file size))
          (cached (and supersonic-browse--images (gethash cache-key supersonic-browse--images))))
     (or cached
         (let* ((svg (svg-create size size))
-               (inset (if selected 0 (round (* size 0.045))))
+               (inset (if selected (round (* size 0.05)) (round (* size 0.075))))
                (inner (- size (* 2 inset)))
                (accent (supersonic-browse--accent)))
+          (when selected
+            (let ((filter (dom-node 'filter '((id . "glow") (x . "-50%") (y . "-50%") (width . "200%") (height . "200%")))))
+              (dom-append-child filter (dom-node 'feGaussianBlur `((stdDeviation . ,(max 3 (round (* size 0.028)))))))
+              (dom-append-child svg filter)
+              ;; A blurred accent copy of the shape, a little larger than the art.
+              (let* ((spread (round (* size 0.025)))
+                     (halo (supersonic-browse--shape-node shape (+ inner (* 2 spread)) 0
+                                                          `(fill . ,accent) '(fill-opacity . "1")
+                                                          '(filter . "url(#glow)"))))
+                (dom-set-attribute halo 'transform (format "translate(%s,%s)" (- inset spread) (- inset spread)))
+                (dom-append-child svg halo))))
           (supersonic-browse--art-svg svg item inner shape file inset inset)
-          (if selected
-              (progn
-                (dom-append-child svg (supersonic-browse--shape-node
-                                       shape size 3 '(fill . "none") `(stroke . ,accent) '(stroke-width . 6)))
-                (let ((r (round (* size 0.12)))
-                      (c (- size (round (* size 0.17)))))
-                  (dom-append-child svg (dom-node 'circle `((cx . ,c) (cy . ,c) (r . ,(+ r 3)) (fill . ,(supersonic-browse--bg))
-                                                            (fill-opacity . "0.5"))))
-                  (dom-append-child svg (dom-node 'circle `((cx . ,c) (cy . ,c) (r . ,r) (fill . ,accent))))
-                  (dom-append-child svg (supersonic-browse--icon 'play (+ c 1) c (supersonic-browse--bg)))))
-            (let ((outline (supersonic-browse--shape-node shape inner 0.5 '(fill . "none")
-                                                          `(stroke . ,(supersonic-browse--fg))
-                                                          '(stroke-opacity . "0.12") '(stroke-width . 1))))
-              (dom-set-attribute outline 'transform (format "translate(%s,%s)" inset inset))
-              (dom-append-child svg outline)))
+          (let ((outline (supersonic-browse--shape-node
+                          shape inner (if selected 0.75 0.5) '(fill . "none")
+                          `(stroke . ,(if selected accent (supersonic-browse--fg)))
+                          `(stroke-opacity . ,(if selected "0.9" "0.12"))
+                          `(stroke-width . ,(if selected 1.5 1)))))
+            (dom-set-attribute outline 'transform (format "translate(%s,%s)" inset inset))
+            (dom-append-child svg outline))
+          (when selected
+            (let ((r (round (* size 0.11)))
+                  (c (- size inset (round (* size 0.15)))))
+              (dom-append-child svg (dom-node 'circle `((cx . ,c) (cy . ,c) (r . ,(+ r 3)) (fill . ,(supersonic-browse--bg))
+                                                        (fill-opacity . "0.5"))))
+              (dom-append-child svg (dom-node 'circle `((cx . ,c) (cy . ,c) (r . ,r) (fill . ,accent))))
+              (dom-append-child svg (supersonic-browse--icon 'play (+ c 1) c (supersonic-browse--bg)))))
           (let ((image (apply #'svg-image svg :ascent 100 :scale 1 (and file (list :base-uri file)))))
             (unless supersonic-browse--images
               (setq supersonic-browse--images (make-hash-table :test #'equal)))
