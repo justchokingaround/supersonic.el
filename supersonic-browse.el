@@ -100,6 +100,7 @@
   "Position of the track row to focus once the page is laid out again.")
 (declare-function supersonic-download-tracks "supersonic-download")
 (declare-function supersonic-local-album-in "supersonic-local")
+(declare-function supersonic-local-toggle "supersonic-local")
 (declare-function supersonic-download-albums "supersonic-download")
 (declare-function supersonic-download-album-p "supersonic-download")
 (declare-function supersonic-download-delete-album "supersonic-download")
@@ -1588,9 +1589,20 @@ scroll, which with a tall image in view is like being stuck."
           (let ((inhibit-read-only t))
             (goto-char (point-max))
             (insert "\n" (supersonic-browse--space supersonic-browse-margin)
-                    (propertize (format "Could not load this page: %s" (error-message-string err))
-                                'face 'error)
+                    (propertize (supersonic-browse--error-text err) 'face 'error)
+                    "\n" (supersonic-browse--space supersonic-browse-margin)
+                    (supersonic-browse-hint-line
+                     '((supersonic-browse-reload . "try again") (supersonic-local-toggle . "local files")
+                       (supersonic-browse-back . "back"))
+                     supersonic-browse-mode-map 10000)
                     "\n"))))))))
+
+(defun supersonic-browse--error-text (err)
+  "Return what to say about ERR, a page that failed to load."
+  (let ((text (error-message-string err)))
+    (if (string-match-p "No answer\\|connection\\|refused\\|unreachable\\|resolve\\|timed out\\|network" text)
+        "The server isn't answering."
+      (concat "This page could not be loaded: " text))))
 
 (defun supersonic-browse--buffer ()
   "Return the browser's buffer, made ready."
@@ -2099,6 +2111,7 @@ Asks first."
      ("home" supersonic-browse-home)
      ("search" supersonic-browse-search)
      ("reload" supersonic-browse-reload)
+     ("local files or the server" supersonic-local-toggle)
      ("close" quit-window))
     ("The queue" queue
      ("play this one" supersonic-browse-open)
@@ -2364,6 +2377,7 @@ The keys are read off the keymaps, so they are the ones bound."
     (define-key map (kbd "A") #'supersonic-browse-add-to-playlist)
     (define-key map (kbd "S") #'supersonic-browse-download)
     (define-key map (kbd "q") #'quit-window)
+    (define-key map (kbd "O") #'supersonic-local-toggle)
     (define-key map (kbd "x") #'supersonic-browse-radio)
     (define-key map (kbd "*") #'supersonic-browse-star)
     (define-key map (kbd "d") #'supersonic-browse-playlist-remove)
