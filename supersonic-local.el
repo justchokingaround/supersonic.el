@@ -493,6 +493,17 @@ A track gets the ids of its album and album artist added."
    (mapcar #'supersonic-local--public (seq-take (nthcdr (or offset 0) albums) count))))
 
 (aio-defun
+ supersonic-local-album-in (directory)
+ "Resolve to the local album whose tracks are in DIRECTORY, or nil.
+For finding an album saved by `supersonic-download-tracks' again."
+ (aio-await (supersonic-local--ensure-index))
+ (let ((directory (file-name-as-directory (expand-file-name directory))))
+   (seq-some (lambda (album)
+               (let ((file (plist-get (car (plist-get album :tracks)) :id)))
+                 (and file (string-prefix-p directory file) (supersonic-local--public album))))
+             (hash-table-values supersonic-local--albums))))
+
+(aio-defun
  supersonic-local--album-tracks (id) "Resolve to the tracks of local album ID, in album order."
  (aio-await (supersonic-local--ensure-index))
  (mapcar #'supersonic-local--public (plist-get (gethash id supersonic-local--albums) :tracks)))

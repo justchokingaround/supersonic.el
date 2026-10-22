@@ -9159,6 +9159,22 @@ always ending with the last one."
     (should (equal "RET open   ? all keys"
                    (substring-no-properties (supersonic-browse-hint-line hints map 25))))))
 
+(ert-deftest supersonic-tests-local-album-in-a-directory ()
+  "A saved album's folder finds the local album of the files in it."
+  (require 'supersonic-local)
+  (let ((supersonic-local--albums (make-hash-table :test #'equal))
+        (supersonic-local--favourites (make-hash-table :test #'equal)))
+    (puthash "album:band\x1flive" '(:id "album:band\x1flive" :name "Live"
+                                     :tracks ((:id "/music/Band/Live (2001)/01 - a.flac")))
+             supersonic-local--albums)
+    (puthash "album:band\x1fother" '(:id "album:band\x1fother" :name "Other"
+                                      :tracks ((:id "/music/Band/Other/01 - b.flac")))
+             supersonic-local--albums)
+    (cl-letf (((symbol-function 'supersonic-local--ensure-index) (lambda () (funcall (supersonic-tests--resolved nil)))))
+      (should (equal "Live" (plist-get (aio-wait-for (supersonic-local-album-in "/music/Band/Live (2001)")) :name)))
+      (should-not (plist-get (aio-wait-for (supersonic-local-album-in "/music/Band/Live (2001)")) :tracks))
+      (should-not (aio-wait-for (supersonic-local-album-in "/music/Nobody/"))))))
+
 (ert-deftest supersonic-tests-provider-album-list-passes-an-offset ()
   "An offset reaches the provider only when one is asked for."
   (let (calls)

@@ -99,6 +99,7 @@
 (defvar-local supersonic-browse--restore-row nil
   "Position of the track row to focus once the page is laid out again.")
 (declare-function supersonic-download-tracks "supersonic-download")
+(declare-function supersonic-local-album-in "supersonic-local")
 (declare-function supersonic-download-albums "supersonic-download")
 (declare-function supersonic-download-album-p "supersonic-download")
 (declare-function supersonic-download-delete-album "supersonic-download")
@@ -733,7 +734,14 @@ of its own, so they take focus like any other."
    ('artists (list :artists (aio-await (supersonic-provider-artists))))
    ('playlists (list :playlists (aio-await (supersonic-provider-playlists))))
    ('starred (list :starred (aio-await (supersonic-provider-starred))))
-   ('downloads (list :albums (supersonic-download-albums)))
+   ('downloads
+    (let ((albums nil))
+      ;; Played from the local files, the saved albums are those files'.
+      (dolist (album (supersonic-download-albums))
+        (let ((local (and (eq supersonic-provider 'local)
+                          (aio-await (supersonic-local-album-in (plist-get album :download-dir))))))
+          (push (if local (append (list :download-dir (plist-get album :download-dir)) local) album) albums)))
+      (list :albums (nreverse albums))))
    ('queue
     (let ((pending (mapcar (lambda (entry)
                              (list entry
@@ -1979,9 +1987,14 @@ Asks first."
   (let ((buff (get-buffer supersonic-browse-buffer-name)))
     (when (and (buffer-live-p buff)
                (eq (plist-get (buffer-local-value 'supersonic-browse--page buff) :kind) 'downloads))
-      (with-current-buffer buff
-        (setq supersonic-browse--content (list :albums (supersonic-download-albums)))
-        (supersonic-browse--render)))))
+      ;; Not a reload: that would blank the page for every song saved.
+      (aio-listen (aio-catch (supersonic-browse--load-content '(:kind downloads)))
+                  (lambda (value)
+                    (let ((outcome (funcall value)))
+                      (when (and (eq (car outcome) :success) (buffer-live-p buff))
+                        (with-current-buffer buff
+                          (setq supersonic-browse--content (cdr outcome))
+                          (supersonic-browse--render)))))))))
 
 (defun supersonic-browse-playlist-delete ()
   "Delete this playlist, after asking."
