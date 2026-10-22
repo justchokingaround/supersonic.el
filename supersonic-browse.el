@@ -1319,7 +1319,8 @@ scroll, which with a tall image in view is like being stuck."
           (overlay-put supersonic-browse--title-overlay 'face '(:inherit (supersonic-browse-accent bold)))
           (move-overlay supersonic-browse--title-overlay (car title) (cdr title)))
          ((and (memq (car-safe key) '(button more))
-               (not (get-text-property pos 'supersonic-browse-image-function)))
+               (not (get-text-property pos 'supersonic-browse-image-function))
+               (not (get-text-property pos 'supersonic-browse-list-row)))
           ;; A button or link lights up as a whole.
           (overlay-put supersonic-browse--title-overlay 'face
                        `(:background ,(supersonic-browse--accent) :foreground ,(supersonic-browse--bg)
@@ -1327,7 +1328,33 @@ scroll, which with a tall image in view is like being stuck."
           (move-overlay supersonic-browse--title-overlay pos
                         (or (next-single-property-change pos 'supersonic-browse-key) (point-max))))
          (t (delete-overlay supersonic-browse--title-overlay)))
-        (if (or (eq (car-safe key) 'track) (get-text-property pos 'supersonic-browse-list-row))
+        (cond
+         ((get-text-property pos 'supersonic-browse-list-row)
+          ;; A row of its own width, centred (the player's): its title
+          ;; lights up as a tile's does, with a bar left of its picture,
+          ;; instead of a band across the window.
+          (let* ((end (save-excursion (goto-char pos) (line-end-position)))
+                 (image (save-excursion
+                          (goto-char pos)
+                          (let ((match (text-property-search-forward
+                                        'display nil (lambda (_ value) (eq (car-safe value) 'image)))))
+                            (and match (< (prop-match-beginning match) end) (prop-match-beginning match)))))
+                 (align (and image (> image pos) (get-text-property (1- image) 'display)))
+                 (left (and (eq (car-safe align) 'space) (car-safe (plist-get (cdr align) :align-to))))
+                 (title (text-property-any pos end 'face 'supersonic-browse-track)))
+            (delete-overlay supersonic-browse--focus-overlay)
+            (if (not (numberp left))
+                (delete-overlay supersonic-browse--bar-overlay)
+              (overlay-put supersonic-browse--bar-overlay 'before-string
+                           (concat (propertize " " 'display `(space :align-to (,(- left 14))))
+                                   (propertize " " 'display '(space :width (4) :height 1.4)
+                                               'face `(:background ,(supersonic-browse--accent)))))
+              (move-overlay supersonic-browse--bar-overlay (1- image) (1- image)))
+            (when title
+              (overlay-put supersonic-browse--title-overlay 'face '(:inherit (supersonic-browse-accent bold)))
+              (move-overlay supersonic-browse--title-overlay title
+                            (or (next-single-property-change title 'face nil end) end)))))
+         ((eq (car-safe key) 'track)
             (let ((start (save-excursion (goto-char pos) (line-beginning-position)))
                   (end (save-excursion (goto-char pos) (1+ (line-end-position))))
                   (accent (supersonic-browse--accent)))
@@ -1337,9 +1364,10 @@ scroll, which with a tall image in view is like being stuck."
               (overlay-put supersonic-browse--bar-overlay 'before-string
                            (concat (propertize " " 'display `(space :align-to (,(- supersonic-browse-margin 18))))
                                    (propertize " " 'display '(space :width (4)) 'face `(:background ,accent))))
-              (move-overlay supersonic-browse--bar-overlay start start))
+              (move-overlay supersonic-browse--bar-overlay start start)))
+         (t
           (delete-overlay supersonic-browse--focus-overlay)
-          (delete-overlay supersonic-browse--bar-overlay))))))
+          (delete-overlay supersonic-browse--bar-overlay)))))))
 
 (defun supersonic-browse--update-focus ()
   "Show which item is in focus: glowing if a tile, highlighted if a row."

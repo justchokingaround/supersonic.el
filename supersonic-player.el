@@ -352,16 +352,20 @@ seen at once; what plays next may be scrolled to."
           (supersonic-lyrics--line-text (1+ (or supersonic-lyrics--index -1))))))
 
 (defun supersonic-player--insert-lyrics ()
-  "Insert the lyrics lines, three fixed lines so the page does not jump."
+  "Insert the lyrics lines, three fixed lines so the page does not jump.
+Without synced lyrics to come, only a sliver of a line, to put them
+in should they turn up after all."
   (let ((lines (supersonic-player--lyrics-lines))
         (start (point)))
-    (pcase-let ((`(,current ,translation ,next) lines))
+    (if (and (not lines) (not (eq (bound-and-true-p supersonic-lyrics--status) 'loading)))
+        (insert (propertize "\n" 'face '(:height 0.1)))
+     (pcase-let ((`(,current ,translation ,next) lines))
       (dolist (line (list (cons current 'supersonic-player-lyric)
                           (cons translation 'supersonic-lyrics-translation)
                           (cons next 'supersonic-player-lyric-next)))
         (if (and (car line) (not (string-empty-p (car line))))
             (supersonic-player--centered-text (propertize (car line) 'face (cdr line)))
-          (insert (propertize " " 'face (cdr line)) "\n"))))
+          (insert (propertize " " 'face (cdr line)) "\n")))))
     (put-text-property start (point) 'supersonic-player-lyrics t)))
 
 (defun supersonic-player--insert-upcoming ()
