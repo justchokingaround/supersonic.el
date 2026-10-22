@@ -296,16 +296,28 @@ the tile in focus glows in the accent colour around its edges."
                 'keymap supersonic-browse-item-map 'pointer 'hand)
           more))
 
+(defun supersonic-browse--box-width (face)
+  "Return the pixels FACE's box adds left and right of its text together."
+  (let* ((box (face-attribute face :box nil t))
+         (width (cond ((integerp box) box)
+                      ((consp box) (plist-get box :line-width)))))
+    (* 2 (abs (cond ((consp width) (car width))
+                    ((integerp width) width)
+                    (t 0))))))
+
 (defun supersonic-browse--heading (text &optional more-label more-action)
   "Insert section heading TEXT, with a MORE-LABEL button calling MORE-ACTION."
   (supersonic-browse--new-region t)
   (insert "\n" (supersonic-browse--space supersonic-browse-margin)
           (propertize text 'face 'supersonic-browse-heading 'supersonic-browse-section t))
   (when more-label
-    (let ((label (concat more-label " ›")))
+    ;; The link's padding box is part of its width, which
+    ;; `string-pixel-width' leaves out.
+    (let ((label (propertize (concat more-label " ›") 'face 'supersonic-browse-link)))
       (insert (supersonic-browse--align (+ supersonic-browse-margin
                                            (- (supersonic-browse--available-width)
-                                              (supersonic--string-pixel-width label))))
+                                              (supersonic--string-pixel-width label)
+                                              (supersonic-browse--box-width 'supersonic-browse-link))))
               (apply #'propertize label 'face 'supersonic-browse-link
                      (supersonic-browse--item-properties (list 'more more-label supersonic-browse--region)
                                                          (list :action more-action)

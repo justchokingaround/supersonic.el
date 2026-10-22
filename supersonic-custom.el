@@ -652,7 +652,7 @@ a row the provider cannot fill, or that is empty, is left out."
   :group 'supersonic-browse)
 
 (defface supersonic-browse-link
-  '((t :inherit supersonic-browse-accent))
+  '((t :inherit supersonic-browse-accent :box (:line-width (14 . 7) :style flat-button)))
   "Face of links such as \"See all\" in the browser."
   :group 'supersonic-browse)
 
