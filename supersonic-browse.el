@@ -219,13 +219,45 @@ At X and Y, 0 by default.  FILE is resolved against the image's
         (dom-append-child svg (dom-node 'rect `((x . ,x) (y . ,y) (width . ,size) (height . ,size)
                                                 (fill . ,(format "url(#%s)" gid))
                                                 (clip-path . ,(format "url(#%s)" id)))))
-        (dom-append-child
-         svg (dom-node 'text `((x . ,(+ x (/ size 2.0))) (y . ,(+ y (* size 0.5)))
-                               (dy . "0.35em") (text-anchor . "middle")
-                               (font-family . ,(supersonic-browse--font-family))
-                               (font-size . ,(round (* size 0.34))) (font-weight . "bold")
-                               (fill . "#ffffff") (fill-opacity . "0.92"))
-                       (supersonic-browse--initials (or (plist-get item :name) (plist-get item :title)))))))))
+        (if (plist-get item :card)
+            ;; A card (a genre, say): its whole name, wrapped, bottom left.
+            (let* ((font (round (* size 0.13)))
+                   (lines (supersonic-browse--wrap (plist-get item :name) (floor (/ (* size 0.84) (* font 0.58))) 3))
+                   (top (- (+ y size) (* size 0.1) (* font 1.15 (1- (length lines))))))
+              (cl-loop for line in lines for i from 0 do
+                       (dom-append-child
+                        svg (dom-node 'text `((x . ,(+ x (* size 0.08))) (y . ,(+ top (* i font 1.15)))
+                                              (font-family . ,(supersonic-browse--font-family))
+                                              (font-size . ,font) (font-weight . "bold")
+                                              (fill . "#ffffff") (fill-opacity . "0.95"))
+                                      line))))
+          (dom-append-child
+           svg (dom-node 'text `((x . ,(+ x (/ size 2.0))) (y . ,(+ y (* size 0.5)))
+                                 (dy . "0.35em") (text-anchor . "middle")
+                                 (font-family . ,(supersonic-browse--font-family))
+                                 (font-size . ,(round (* size 0.34))) (font-weight . "bold")
+                                 (fill . "#ffffff") (fill-opacity . "0.92"))
+                         (supersonic-browse--initials (or (plist-get item :name) (plist-get item :title))))))))))
+
+(defun supersonic-browse--wrap (text width lines)
+  "Return TEXT broken into at most LINES lines of WIDTH characters.
+The last line is cut with an ellipsis if TEXT does not fit."
+  (let ((words (split-string (or text "") "[[:space:]]+" t))
+        (result nil)
+        (line ""))
+    (while words
+      (let ((candidate (if (string-empty-p line) (car words) (concat line " " (car words)))))
+        (if (or (<= (length candidate) width) (string-empty-p line))
+            (setq line candidate
+                  words (cdr words))
+          (push line result)
+          (setq line ""))))
+    (push line result)
+    (setq result (nreverse (delete "" result)))
+    (if (<= (length result) lines)
+        (mapcar (lambda (l) (truncate-string-to-width l width nil nil "…")) result)
+      (append (seq-take result (1- lines))
+              (list (truncate-string-to-width (string-join (nthcdr (1- lines) result) " ") width nil nil "…"))))))
 
 (defun supersonic-browse--tile-image (item shape selected)
   "Return the display spec of ITEM's tile, a SHAPE, glowing if SELECTED.
@@ -620,6 +652,8 @@ of its own, so they take focus like any other."
     ('album (or (plist-get (plist-get page :item) :name) "Album"))
     ('playlists "Playlists")
     ('starred "Favourites")
+    ('genres "Genres")
+    ('genre (plist-get page :id))
     ('playlist (or (plist-get (plist-get page :item) :name) "Playlist"))
     ('search (format "“%s”" (plist-get page :query)))
     (_ "?")))
@@ -652,12 +686,18 @@ of its own, so they take focus like any other."
           (when (and (eq (car outcome) :success) (cdr outcome))
             (push (cons (car pending) (cdr outcome)) sections))))
       (list :sections (nreverse sections)
+            :genres (and (supersonic-provider-supports-p 'genres)
+                         (let ((outcome (aio-await (aio-catch (supersonic-provider-genres)))))
+                           (and (eq (car outcome) :success)
+                                (supersonic-browse--genre-cards (seq-take (cdr outcome) supersonic-browse-section-count)))))
             :playlists (and (supersonic-provider-supports-p 'playlists)
                             (let ((outcome (aio-await (aio-catch (supersonic-provider-playlists)))))
                               (and (eq (car outcome) :success) (cdr outcome)))))))
    ('artists (list :artists (aio-await (supersonic-provider-artists))))
    ('playlists (list :playlists (aio-await (supersonic-provider-playlists))))
    ('starred (list :starred (aio-await (supersonic-provider-starred))))
+   ('genres (list :genres (supersonic-browse--genre-cards (aio-await (supersonic-provider-genres)))))
+   ('genre (list :albums (aio-await (supersonic-provider-genre-albums (plist-get page :id) supersonic-album-list-count))))
    ('playlist (list :tracks (aio-await (supersonic-provider-playlist-tracks (plist-get page :id)))))
    ('albums (list :albums (aio-await (supersonic-provider-album-list (plist-get page :type) supersonic-album-list-count))))
    ('artist
@@ -726,6 +766,7 @@ of its own, so they take focus like any other."
                     ("Artists" . supersonic-browse-artists)
                     ("Playlists" . supersonic-browse-playlists)
                     ("♥ Favourites" . supersonic-browse-favourites)
+                    ("Genres" . supersonic-browse-genres)
                     ("Search" . supersonic-browse-search)))
     (insert (apply #'propertize (concat " " (car button) " ")
                    'face 'supersonic-browse-button
@@ -752,7 +793,10 @@ of its own, so they take focus like any other."
         (setq first nil))
       (when (and playlists (not sections))
         (supersonic-browse--heading "Your playlists" "See all" #'supersonic-browse-playlists)
-        (supersonic-browse--insert-grid 'playlist playlists 'square 1)))))
+        (supersonic-browse--insert-grid 'playlist playlists 'square 1))
+      (when (plist-get content :genres)
+        (supersonic-browse--heading "Genres" "See all" #'supersonic-browse-genres)
+        (supersonic-browse--insert-grid 'genre (plist-get content :genres) 'square 1)))))
 
 (defun supersonic-browse--render-page (content)
   "Insert the body of the current page from CONTENT."
@@ -821,6 +865,20 @@ of its own, so they take focus like any other."
          (when (plist-get starred :artists)
            (supersonic-browse--heading "Artists")
            (supersonic-browse--insert-grid 'artist (plist-get starred :artists) 'circle))))
+      ('genres
+       (let ((genres (plist-get content :genres)))
+         (supersonic-browse--title "Genres" (supersonic-browse--plural (length genres) "genre"))
+         (insert "\n")
+         (supersonic-browse--insert-grid 'genre genres 'square)))
+      ('genre
+       (let* ((albums (plist-get content :albums))
+              (item (plist-get page :item)))
+         (supersonic-browse--hero
+          item 'square "Genre" (plist-get item :name)
+          (and (plist-get item :album-count) (supersonic-browse--plural (plist-get item :album-count) "album"))
+          (and (plist-get item :song-count) (supersonic-browse--plural (plist-get item :song-count) "song")))
+         (supersonic-browse--heading "Albums")
+         (supersonic-browse--insert-grid 'album albums 'square)))
       ('playlists
        (let ((playlists (plist-get content :playlists)))
          (supersonic-browse--title "Playlists" (supersonic-browse--plural (length playlists) "playlist"))
@@ -1464,6 +1522,8 @@ TYPE is one of `supersonic-provider-album-list-types'."
                       (if (equal (plist-get item :id) (plist-get supersonic-browse--page :id))
                           (plist-get supersonic-browse--content :tracks)
                         (aio-await (supersonic-provider-playlist-tracks (plist-get item :id))))))
+   ('genre (mapcar (lambda (track) (plist-get track :id))
+                   (aio-await (supersonic-provider-random-tracks supersonic-browse-genre-count (plist-get item :id)))))
    ('track (list (plist-get item :id)))))
 
 (defun supersonic-browse--shuffled (list)
@@ -1526,6 +1586,16 @@ TYPE is one of `supersonic-provider-album-list-types'."
   (interactive)
   (supersonic-browse-visit '(:kind starred)))
 
+;;;###autoload
+(defun supersonic-browse-genres ()
+  "Show every genre in the browser."
+  (interactive)
+  (supersonic-browse-visit '(:kind genres)))
+
+(defun supersonic-browse--genre-cards (genres)
+  "Return GENRES marked to be drawn as cards with their names."
+  (mapcar (lambda (genre) (append (list :card t) genre)) genres))
+
 (defun supersonic-browse-radio ()
   "Start a radio from the item in focus: it, then what is like it."
   (interactive)
@@ -1552,6 +1622,7 @@ TYPE is one of `supersonic-provider-album-list-types'."
       ('artist (supersonic-browse-visit (list :kind 'artist :id (plist-get item :id) :item item)))
       ('album (supersonic-browse-visit (list :kind 'album :id (plist-get item :id) :item item)))
       ('playlist (supersonic-browse-visit (list :kind 'playlist :id (plist-get item :id) :item item)))
+      ('genre (supersonic-browse-visit (list :kind 'genre :id (plist-get item :id) :item item)))
       ('track (supersonic-playback-start (nthcdr (get-text-property (point) 'supersonic-browse-index)
                                                  (get-text-property (point) 'supersonic-browse-ids))))
       ((or 'button 'more)
@@ -1767,6 +1838,7 @@ TYPE is one of `supersonic-provider-album-list-types'."
      ("artists" supersonic-browse-artists)
      ("playlists" supersonic-browse-playlists)
      ("favourites" supersonic-browse-favourites)
+     ("genres" supersonic-browse-genres)
      ("play queue" supersonic-show-queue)
      ("save the queue as a playlist" supersonic-save-queue-as-playlist)
      ("lyrics" supersonic-lyrics)

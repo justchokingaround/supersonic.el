@@ -9311,6 +9311,29 @@ played most, best first and without repeats."
       (supersonic-browse-open))
     (should (eq 'asked got))))
 
+(ert-deftest supersonic-tests-browse-wrap ()
+  "Names wrap at word boundaries into a few lines, the last cut if need be."
+  (require 'supersonic-browse)
+  (should (equal '("Psychedelic" "Rock") (supersonic-browse--wrap "Psychedelic Rock" 12 3)))
+  (should (equal '("Rock") (supersonic-browse--wrap "Rock" 12 3)))
+  (should (equal '("a b" "c d" "e f…") (supersonic-browse--wrap "a b c d e f g h" 4 3)))
+  (should (equal '("Supercalifr…") (supersonic-browse--wrap "Supercalifragilistic" 12 3))))
+
+(ert-deftest supersonic-tests-local-genres ()
+  "Local genres count their albums and songs, most albums first."
+  (require 'supersonic-local)
+  (supersonic-tests--with-local-index
+      (list '(:id "/1" :title "a" :album-artist "X" :album "A" :genre "Rock")
+            '(:id "/2" :title "b" :album-artist "X" :album "A" :genre "Rock")
+            '(:id "/3" :title "c" :album-artist "Y" :album "B" :genre "Rock")
+            '(:id "/4" :title "d" :album-artist "Z" :album "C" :genre "Jazz"))
+    (cl-letf (((symbol-function 'supersonic-local--ensure-index) (aio-lambda () nil)))
+      (should (equal '((:id "Rock" :name "Rock" :song-count 3 :album-count 2)
+                       (:id "Jazz" :name "Jazz" :song-count 1 :album-count 1))
+                     (aio-wait-for (supersonic-local--genres))))
+      (should (equal '("C") (mapcar (lambda (a) (plist-get a :name))
+                                    (aio-wait-for (supersonic-local--genre-albums "Jazz" 10))))))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here

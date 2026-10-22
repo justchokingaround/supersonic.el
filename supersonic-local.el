@@ -830,6 +830,35 @@ NOW-PLAYING is non-nil when it has just started; that is when it counts."
    (mapcar #'supersonic-local--public
            (seq-take (seq-mapcat (lambda (album) (plist-get album :tracks)) played) count))))
 
+(aio-defun
+ supersonic-local--genres () "Resolve to the genres of the local tracks, most albums first."
+ (aio-await (supersonic-local--ensure-index))
+ (let ((albums (make-hash-table :test #'equal))
+       (songs (make-hash-table :test #'equal)))
+   (maphash (lambda (_file track)
+              (let ((genre (plist-get track :genre)))
+                (when genre
+                  (cl-incf (gethash genre songs 0))
+                  (puthash genre (cons (supersonic-local--album-key track) (gethash genre albums)) albums))))
+            supersonic-local--tracks)
+   (let (genres)
+     (maphash (lambda (genre count)
+                (push (list :id genre :name genre :song-count count
+                            :album-count (length (delete-dups (gethash genre albums))))
+                      genres))
+              songs)
+     (sort genres (lambda (a b) (> (plist-get a :album-count) (plist-get b :album-count)))))))
+
+(aio-defun
+ supersonic-local--genre-albums (genre count) "Resolve to at most COUNT local albums of GENRE."
+ (aio-await (supersonic-local--ensure-index))
+ (mapcar #'supersonic-local--public
+         (seq-take (seq-filter (lambda (album)
+                                 (seq-some (lambda (track) (equal (plist-get track :genre) genre))
+                                           (plist-get album :tracks)))
+                               (hash-table-values supersonic-local--albums))
+                   count)))
+
 (defun supersonic-local--cache-namespace ()
   "Return the namespace of local ids, which are file names already."
   "local")
@@ -864,6 +893,8 @@ NOW-PLAYING is non-nil when it has just started; that is when it counts."
    (star . supersonic-local--star)
    (starred . supersonic-local--starred)
    (top-tracks . supersonic-local--top-tracks)
+   (genres . supersonic-local--genres)
+   (genre-albums . supersonic-local--genre-albums)
    (cache-namespace . supersonic-local--cache-namespace)
    (config-hints . supersonic-local--config-hints)))
 

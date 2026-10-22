@@ -636,6 +636,11 @@ a row the provider cannot fill, or that is empty, is left out."
   :type 'integer
   :group 'supersonic-browse)
 
+(defcustom supersonic-browse-genre-count 100
+  "How many random tracks of a genre playing it queues."
+  :type 'integer
+  :group 'supersonic-browse)
+
 (defface supersonic-browse-greeting
   '((t :inherit bold :height 2.0))
   "Face of the browser's page titles."

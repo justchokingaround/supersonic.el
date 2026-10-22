@@ -575,6 +575,28 @@ agents do not know."
          (seq-take (append top (seq-remove (lambda (track) (member (plist-get track :id) ids)) played))
                    count))))))
 
+(aio-defun
+ supersonic-subsonic--genres () "Return a promise resolving to every genre, via getGenres."
+ (sort (mapcar (lambda (genre)
+                 (let ((name (format "%s" (assoc-default "value" genre))))
+                   (list :id name :name name
+                         :album-count (or (assoc-default "albumCount" genre) 0)
+                         :song-count (or (assoc-default "songCount" genre) 0))))
+               (supersonic-recursive-assoc
+                (aio-await (supersonic-get-json (supersonic-build-url "/getGenres.view" nil)))
+                '("subsonic-response" "genres" "genre")))
+       (lambda (a b) (> (plist-get a :album-count) (plist-get b :album-count)))))
+
+(aio-defun
+ supersonic-subsonic--genre-albums (genre count)
+ "Return a promise resolving to at most COUNT albums of GENRE.
+Asks getAlbumList2 for type byGenre."
+ (supersonic-subsonic--album-list-from
+  (aio-await (supersonic-get-json
+              (supersonic-build-url "/getAlbumList2.view"
+                                    `(("type" . "byGenre") ("genre" . ,genre)
+                                      ("size" . ,(number-to-string count))))))))
+
 (defun supersonic-subsonic--cache-namespace ()
   "Return the Subsonic server's address, `supersonic-host'.
 Ids are only unique per server, so this is what keeps one server's
@@ -617,6 +639,8 @@ cached art and waveforms apart from another's."
    (star . supersonic-subsonic--star)
    (starred . supersonic-subsonic--starred)
    (top-tracks . supersonic-subsonic--top-tracks)
+   (genres . supersonic-subsonic--genres)
+   (genre-albums . supersonic-subsonic--genre-albums)
    (cache-namespace . supersonic-subsonic--cache-namespace)
    (config-hints . supersonic-subsonic--config-hints)))
 
