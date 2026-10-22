@@ -436,6 +436,8 @@ An album over several discs gets a heading per disc."
             (duration-x (- right (supersonic--string-pixel-width duration)))
             (detail (string-join
                      (delq nil (list (and (or show-album (not (equal (plist-get track :artist) album-artist)))
+                                          ;; Not on the artist's own page.
+                                          (not (eq (plist-get supersonic-browse--page :kind) 'artist))
                                           (plist-get track :artist))
                                      (and show-album (plist-get track :album))))
                      " · "))
@@ -643,7 +645,14 @@ of its own, so they take focus like any other."
    ('starred (list :starred (aio-await (supersonic-provider-starred))))
    ('playlist (list :tracks (aio-await (supersonic-provider-playlist-tracks (plist-get page :id)))))
    ('albums (list :albums (aio-await (supersonic-provider-album-list (plist-get page :type) supersonic-album-list-count))))
-   ('artist (list :albums (aio-await (supersonic-provider-artist-albums (plist-get page :id)))))
+   ('artist
+    (let ((top (and (supersonic-provider-supports-p 'top-tracks)
+                    (aio-catch (supersonic-provider-top-tracks
+                                (list :id (plist-get page :id) :name (plist-get (plist-get page :item) :name))
+                                supersonic-browse-top-count)))))
+      (list :albums (aio-await (supersonic-provider-artist-albums (plist-get page :id)))
+            :top (and top (let ((outcome (aio-await top)))
+                            (and (eq (car outcome) :success) (cdr outcome)))))))
    ('album (list :tracks (aio-await (supersonic-provider-album-tracks (plist-get page :id)))))
    ('search (list :results (aio-await (supersonic-provider-search (plist-get page :query)))))))
 
@@ -755,6 +764,9 @@ of its own, so they take focus like any other."
           'circle (if (plist-get item :starred) "Artist · ♥ favourite" "Artist") (or (plist-get item :name) "")
           (supersonic-browse--plural (length albums) "album")
           (and (> songs 0) (supersonic-browse--plural songs "song")))
+         (when (plist-get content :top)
+           (supersonic-browse--heading "Popular")
+           (supersonic-browse--insert-tracks (plist-get content :top) t))
          (supersonic-browse--heading "Albums")
          (supersonic-browse--insert-grid 'album albums 'square)))
       ('album

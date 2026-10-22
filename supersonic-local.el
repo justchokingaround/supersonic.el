@@ -816,6 +816,20 @@ NOW-PLAYING is non-nil when it has just started; that is when it counts."
            :albums (pick (hash-table-values supersonic-local--albums))
            :artists (pick (hash-table-values supersonic-local--artists))))))
 
+(aio-defun
+ supersonic-local--top-tracks (artist count)
+ "Resolve to at most COUNT tracks of local ARTIST from its most played albums."
+ (aio-await (supersonic-local--ensure-index))
+ (unless supersonic-local--counts
+   (supersonic-local--load-counts))
+ (let* ((entry (gethash (plist-get artist :id) supersonic-local--artists))
+        (albums (sort (delq nil (mapcar (lambda (id) (gethash id supersonic-local--albums)) (plist-get entry :albums)))
+                      (lambda (a b) (> (gethash (plist-get a :id) supersonic-local--counts 0)
+                                       (gethash (plist-get b :id) supersonic-local--counts 0)))))
+        (played (seq-filter (lambda (album) (> (gethash (plist-get album :id) supersonic-local--counts 0) 0)) albums)))
+   (mapcar #'supersonic-local--public
+           (seq-take (seq-mapcat (lambda (album) (plist-get album :tracks)) played) count))))
+
 (defun supersonic-local--cache-namespace ()
   "Return the namespace of local ids, which are file names already."
   "local")
@@ -849,6 +863,7 @@ NOW-PLAYING is non-nil when it has just started; that is when it counts."
    (random-tracks . supersonic-local--random-tracks)
    (star . supersonic-local--star)
    (starred . supersonic-local--starred)
+   (top-tracks . supersonic-local--top-tracks)
    (cache-namespace . supersonic-local--cache-namespace)
    (config-hints . supersonic-local--config-hints)))
 

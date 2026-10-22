@@ -69,7 +69,7 @@
     podcasts podcast-episodes add-podcast download-podcast-episode
     stream-url scrobble cover-art cover-art-url lyrics
     playlists playlist-tracks create-playlist edit-playlist set-playlist-tracks delete-playlist
-    play-queue save-play-queue similar-tracks random-tracks star starred
+    play-queue save-play-queue similar-tracks random-tracks star starred top-tracks
     cache-namespace config-hints)
   "The library operations a provider can implement.
 All but `scrobble', `cache-namespace' and `config-hints' return a
@@ -153,6 +153,9 @@ promise.
   favourite, where the provider knows.
 - `starred' takes no arguments and resolves to the favourites, as
   (:tracks TRACKS :albums ALBUMS :artists ARTISTS).
+- `top-tracks' takes an ARTIST plist (`:id' and `:name') and a COUNT
+  and resolves to at most COUNT of the artist's most popular tracks,
+  best first.  Tracks may carry `:play-count'.
 - `cache-namespace' takes no arguments and returns a string naming
   the library this provider is connected to, such as a server
   address.  See `supersonic-provider-cache-name'.
@@ -383,6 +386,11 @@ ID is a track's, an album's or an artist's."
  supersonic-provider-starred ()
  "Return a promise resolving to the favourites: (:tracks :albums :artists)."
  (aio-await (supersonic-provider--call 'starred)))
+
+(aio-defun
+ supersonic-provider-top-tracks (artist count)
+ "Return a promise resolving to at most COUNT of ARTIST's most popular tracks."
+ (aio-await (supersonic-provider--call 'top-tracks artist count)))
 
 (defun supersonic-provider-cache-name (id)
   "Return a file name for ID that is safe, bounded and unique to the library.

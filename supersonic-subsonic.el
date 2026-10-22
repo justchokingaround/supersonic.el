@@ -95,7 +95,8 @@ as `:genre', for a now-playing row of the user's own to read."
      (:disc . "discNumber")
      (:album-id . "albumId")
      (:artist-id . "artistId")
-     (:starred . "starred"))))
+     (:starred . "starred")
+     (:play-count . "playCount"))))
 
 (defun supersonic-subsonic--playlist (data)
   "Turn a Subsonic playlist alist DATA into a facade playlist plist."
@@ -543,6 +544,37 @@ external agents, such as Last.fm, which may know nothing."
          :albums (mapcar #'supersonic-subsonic--album (assoc-default "album" starred))
          :artists (mapcar #'supersonic-subsonic--artist (assoc-default "artist" starred)))))
 
+(aio-defun
+ supersonic-subsonic--top-tracks (artist count)
+ "Return a promise resolving to at most COUNT of ARTIST's top tracks.
+getTopSongs first, which knows what is popular from the server's
+external agents (Last.fm and the like) and matches it to the library;
+topped up with the artist's tracks played most here, for an artist the
+agents do not know."
+ (let* ((top (and (plist-get artist :name)
+                  (condition-case nil
+                      (mapcar #'supersonic-subsonic--track
+                              (supersonic-recursive-assoc
+                               (aio-await (supersonic-get-json
+                                           (supersonic-build-url "/getTopSongs.view"
+                                                                 `(("artist" . ,(plist-get artist :name))
+                                                                   ("count" . ,(number-to-string count))))))
+                               '("subsonic-response" "topSongs" "song")))
+                    (error nil))))
+        (top (seq-take top count)))
+   (if (or (>= (length top) count) (not (plist-get artist :id)))
+       top
+     (let* ((albums (aio-await (supersonic-subsonic--artist-albums (plist-get artist :id))))
+            (promises (mapcar (lambda (album) (supersonic-subsonic--album-tracks (plist-get album :id))) albums))
+            (tracks nil))
+       (dolist (promise promises)
+         (setq tracks (append tracks (condition-case nil (aio-await promise) (error nil)))))
+       (let ((played (sort (seq-filter (lambda (track) (> (or (plist-get track :play-count) 0) 0)) tracks)
+                           (lambda (a b) (> (plist-get a :play-count) (plist-get b :play-count)))))
+             (ids (mapcar (lambda (track) (plist-get track :id)) top)))
+         (seq-take (append top (seq-remove (lambda (track) (member (plist-get track :id) ids)) played))
+                   count))))))
+
 (defun supersonic-subsonic--cache-namespace ()
   "Return the Subsonic server's address, `supersonic-host'.
 Ids are only unique per server, so this is what keeps one server's
@@ -584,6 +616,7 @@ cached art and waveforms apart from another's."
    (random-tracks . supersonic-subsonic--random-tracks)
    (star . supersonic-subsonic--star)
    (starred . supersonic-subsonic--starred)
+   (top-tracks . supersonic-subsonic--top-tracks)
    (cache-namespace . supersonic-subsonic--cache-namespace)
    (config-hints . supersonic-subsonic--config-hints)))
 

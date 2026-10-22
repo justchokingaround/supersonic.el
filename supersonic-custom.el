@@ -625,6 +625,11 @@ a row the provider cannot fill, or that is empty, is left out."
   :type 'integer
   :group 'supersonic-browse)
 
+(defcustom supersonic-browse-top-count 5
+  "How many of an artist's most popular tracks its page lists."
+  :type 'integer
+  :group 'supersonic-browse)
+
 (defface supersonic-browse-greeting
   '((t :inherit bold :height 2.0))
   "Face of the browser's page titles."

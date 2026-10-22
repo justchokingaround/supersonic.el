@@ -9266,6 +9266,23 @@ and show no messages, so \"Contacting host\" never flashes up."
       (supersonic-subsonic--scrobble "t1" t))
     (should (equal '((t t) (t t)) calls))))
 
+(ert-deftest supersonic-tests-subsonic-top-tracks-topped-up-by-plays ()
+  "Top tracks come from getTopSongs, topped up with the artist's tracks
+played most, best first and without repeats."
+  (cl-letf (((symbol-function 'supersonic-build-url) (lambda (endpoint query) (cons endpoint query)))
+            ((symbol-function 'supersonic-get-json)
+             (aio-lambda (url)
+               (should (equal "/getTopSongs.view" (car url)))
+               (should (equal "Tally Hall" (cdr (assoc "artist" (cdr url)))))
+               '(("subsonic-response" ("topSongs" ("song" (("id" . "t1") ("title" . "Ruler"))))))))
+            ((symbol-function 'supersonic-subsonic--artist-albums) (aio-lambda (_id) '((:id "al1"))))
+            ((symbol-function 'supersonic-subsonic--album-tracks)
+             (aio-lambda (_id) '((:id "t1" :play-count 9) (:id "t2" :play-count 3) (:id "t3" :play-count 7)
+                                 (:id "t4")))))
+    (should (equal '("t1" "t3" "t2")
+                   (mapcar (lambda (x) (plist-get x :id))
+                           (aio-wait-for (supersonic-subsonic--top-tracks '(:id "ar1" :name "Tally Hall") 5)))))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here
