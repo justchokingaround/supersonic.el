@@ -593,7 +593,13 @@ Mirrors the active backend's play queue, refreshed whenever it may have changed.
 
 ;;;###autoload
 (defun supersonic-show-queue ()
-  "Open a buffer showing the active backend's current play queue."
+  "Show the play queue: the library browser's queue page.
+The list of `supersonic-queue-mode' remains, as `supersonic-queue-list'."
+  (interactive)
+  (supersonic-browse-queue))
+
+(defun supersonic-queue-list ()
+  "Open a buffer listing the active backend's current play queue."
   (interactive)
   (let ((buff (get-buffer-create supersonic-queue-buffer-name)))
     (with-current-buffer buff

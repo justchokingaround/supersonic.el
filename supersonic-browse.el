@@ -531,8 +531,8 @@ An album over several discs gets a heading per disc."
             (detail (and (not (string-empty-p detail)) (propertize (concat "   " detail) 'face 'shadow)))
             (shown (supersonic-browse--fit (concat title detail) (- duration-x title-x (* 2 char))))
             (properties (supersonic-browse--item-properties
-                         (list 'track (plist-get track :id) index) track
-                         'supersonic-browse-ids ids 'supersonic-browse-index index
+                         (list 'track (plist-get track :id) (or (plist-get track :queue-index) index)) track
+                         'supersonic-browse-ids ids 'supersonic-browse-index (or (plist-get track :queue-index) index)
                          'supersonic-browse-region supersonic-browse--region)))
        (insert (apply #'propertize
                       (concat strut
@@ -985,16 +985,30 @@ others in order while they fit."
          ;; Opened, the page shows the song playing, past those played.
          (when (and current (not supersonic-browse--selected) (not supersonic-browse--restore-row))
            (setq supersonic-browse--restore-row current))
-         (cl-loop for track in tracks for i below (or current 0)
-                  do (plist-put track :queue-played t))
+         ;; Rows keep their place in the queue, whichever section shows them.
+         (cl-loop for track in tracks for i from 0
+                  do (plist-put track :queue-index i)
+                  when (and current (< i current)) do (plist-put track :queue-played t))
          (supersonic-browse--title "Queue"
                                    (string-join (delq nil (list (supersonic-browse--plural (length tracks) "song")
                                                                 (and left (concat (supersonic-browse--total left) " left"))))
                                                 " · "))
-         (if tracks
-             (progn (insert "\n") (supersonic-browse--insert-tracks tracks t))
-           (insert "\n" (supersonic-browse--space supersonic-browse-margin)
-                   (propertize "Nothing queued." 'face 'shadow) "\n"))))
+         (if (not tracks)
+             (insert "\n" (supersonic-browse--space supersonic-browse-margin)
+                     (propertize "Nothing queued." 'face 'shadow) "\n")
+           (let ((next (if current (nthcdr (1+ current) tracks) tracks))
+                 (played (and current (reverse (seq-take tracks current)))))
+             (when current
+               (supersonic-browse--heading "Now playing")
+               (supersonic-browse--insert-tracks (list (nth current tracks)) t))
+             (supersonic-browse--heading "Up next")
+             (if next
+                 (supersonic-browse--insert-tracks next t)
+               (insert (supersonic-browse--space supersonic-browse-margin)
+                       (propertize "Nothing after this song." 'face 'shadow) "\n"))
+             (when played
+               (supersonic-browse--heading "Played")
+               (supersonic-browse--insert-tracks played t))))))
       ('starred
        (let* ((starred (plist-get content :starred))
               (tracks (plist-get starred :tracks)))
@@ -2291,8 +2305,19 @@ PREFIX is put before the keys of a `prefix' section."
                      (and entries (cons (car section) entries))))
                  supersonic-cheatsheet--sections)))
          (width (window-body-width (get-buffer-window (current-buffer) t) t))
-         (key-width (* 13 (frame-char-width)))
-         (column-width (+ key-width (* 26 (frame-char-width))))
+         (entries (apply #'append (mapcar #'cdr blocks)))
+         ;; As wide as the widest keys and labels, so nothing overlaps.
+         (key-width (+ (* 2 (frame-char-width))
+                       (apply #'max (* 4 (frame-char-width))
+                              (mapcar (lambda (entry)
+                                        (+ (supersonic--string-pixel-width
+                                            (mapconcat #'supersonic-cheatsheet--chip (car entry) " / "))
+                                           (* (length (car entry))
+                                              (supersonic-browse--box-width 'supersonic-cheatsheet-key))))
+                                      entries))))
+         (column-width (+ key-width (* 3 (frame-char-width))
+                          (apply #'max 0 (mapcar (lambda (entry) (supersonic--string-pixel-width (cdr entry)))
+                                                 entries))))
          (columns (max 1 (min (length blocks) (/ (- width (* 2 supersonic-browse-margin)) column-width))))
          (heights (make-vector columns 0))
          (placed (make-vector columns nil)))
@@ -2341,12 +2366,10 @@ The keys are read off the keymaps, so they are the ones bound."
         (with-current-buffer buff
           (unless (derived-mode-p 'supersonic-cheatsheet-mode)
             (supersonic-cheatsheet-mode)))
-        (let ((window (display-buffer buff '((display-buffer-reuse-window display-buffer-in-side-window)
-                                             (side . bottom) (window-height . 0.42)))))
-          (with-current-buffer buff
-            (with-selected-window window
-              (supersonic-cheatsheet--render from))
-            (fit-window-to-buffer window (floor (* 0.6 (frame-height (window-frame window)))))))))))
+        ;; In place of the page, which it needs the room of; ? or q
+        ;; brings the page back.
+        (pop-to-buffer-same-window buff)
+        (supersonic-cheatsheet--render from)))))
 
 (defvar supersonic-cheatsheet-mode-map
   (let ((map (make-sparse-keymap)))
