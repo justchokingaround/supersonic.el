@@ -615,10 +615,14 @@ the accent colour itself; the big play/pause gets a halo instead."
               (supersonic-browse--index-stops))))))))
 
 (defun supersonic-player--window-changed (window)
-  "Lay the page out again if WINDOW, showing it, changed width."
+  "Lay the page out again if WINDOW, showing it, changed width; back to the top.
+A window shown again, or growing back, may have been scrolled while it
+was small to keep the control in focus in view; the page is meant to
+be seen from its top."
   (with-current-buffer (window-buffer window)
     (unless (eql supersonic-player--width (window-body-width window t))
-      (supersonic-player--render))))
+      (supersonic-player--render))
+    (set-window-start window (point-min) t)))
 
 (defconst supersonic-player--hooks
   '((supersonic-playback-track-change-hook . supersonic-player--refresh-all)
