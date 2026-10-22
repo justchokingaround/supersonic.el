@@ -9175,6 +9175,25 @@ always ending with the last one."
       (should-not (plist-get (aio-wait-for (supersonic-local-album-in "/music/Band/Live (2001)")) :tracks))
       (should-not (aio-wait-for (supersonic-local-album-in "/music/Nobody/"))))))
 
+(ert-deftest supersonic-tests-browse-flash-on-the-item ()
+  "An action's word shows in place of a tile's second line, or of a
+track row's duration."
+  (require 'supersonic-browse)
+  (with-temp-buffer
+    (let ((tile '(album "a" 1)) (row '(track "t" 0)))
+      (insert (propertize "*" 'supersonic-browse-key tile) "\n"
+              (propertize "Title" 'supersonic-browse-key tile 'face 'supersonic-browse-tile-title) "\n"
+              (propertize "Band" 'supersonic-browse-key tile 'face 'supersonic-browse-tile-subtitle) "\n"
+              (propertize (concat "Song" (propertize "3:00" 'face 'supersonic-browse-track-number))
+                          'supersonic-browse-key row))
+      (cl-letf (((symbol-function 'run-at-time) #'ignore))
+        (supersonic-browse--flash (current-buffer) tile "Queued")
+        (supersonic-browse--flash (current-buffer) row "Saving"))
+      (should (equal '("Band" "3:00")
+                     (mapcar (lambda (o) (buffer-substring (overlay-start o) (overlay-end o)))
+                             (sort (overlays-in (point-min) (point-max))
+                                   (lambda (a b) (< (overlay-start a) (overlay-start b))))))))))
+
 (ert-deftest supersonic-tests-provider-album-list-passes-an-offset ()
   "An offset reaches the provider only when one is asked for."
   (let (calls)

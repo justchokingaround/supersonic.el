@@ -1725,9 +1725,33 @@ TYPE is one of `supersonic-provider-album-list-types'."
              do (cl-rotatef (aref vector i) (aref vector (random (1+ i)))))
     (append vector nil)))
 
+(defun supersonic-browse--flash (buff key text)
+  "Show TEXT for a moment in place of the second line of item KEY in BUFF.
+That is a tile's line under its title, or a track row's duration: it
+says right there that something was done to the item."
+  (when (buffer-live-p buff)
+    (with-current-buffer buff
+      (let ((pos (point-min)) (found nil))
+        (while (and (not found) (setq pos (text-property-any pos (point-max) 'supersonic-browse-key key)))
+          (let ((end (or (next-single-property-change pos 'supersonic-browse-key) (point-max))))
+            (when (memq (get-text-property pos 'face) '(supersonic-browse-tile-subtitle supersonic-browse-track-number))
+              (setq found (cons pos end)))
+            (unless found
+              ;; A track row: its duration is a stretch within it.
+              (let ((duration (text-property-any pos end 'face 'supersonic-browse-track-number)))
+                (when (and duration (> duration pos))
+                  (setq found (cons duration (or (next-single-property-change duration 'face nil end) end))))))
+            (setq pos end)))
+        (when found
+          (let ((overlay (make-overlay (car found) (cdr found))))
+            (overlay-put overlay 'display (propertize text 'face 'supersonic-browse-accent))
+            (run-at-time 2 nil #'delete-overlay overlay)))))))
+
 (defun supersonic-browse--with-ids (verb function)
   "Call FUNCTION with the track ids of the item in focus, saying VERB."
-  (pcase-let ((`(,kind . ,item) (supersonic-browse--target)))
+  (pcase-let ((`(,kind . ,item) (supersonic-browse--target))
+              (buff (current-buffer))
+              (key (get-text-property (point) 'supersonic-browse-key)))
     (when (memq kind '(button more))
       (user-error "Not something to play"))
     (aio-listen (aio-catch (supersonic-browse--track-ids kind item))
@@ -1737,6 +1761,7 @@ TYPE is one of `supersonic-provider-album-list-types'."
                         (message "[Supersonic] Failed: %s" (error-message-string (cdr outcome)))
                       (when (cdr outcome)
                         (funcall function (cdr outcome))
+                        (supersonic-browse--flash buff key verb)
                         (message "%s %s" verb (or (plist-get item :name) (plist-get item :title) "")))))))))
 
 (defun supersonic-browse-play ()
