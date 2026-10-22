@@ -9058,6 +9058,24 @@ unanswered for longer than the reply timeout, not on the first miss."
       (should (= 1 hooked))
       (should-not supersonic-mpv--first-miss))))
 
+(ert-deftest supersonic-tests-consult-candidates ()
+  "Search results become candidates grouped by kind, each carrying its
+item, kept apart even when they read the same."
+  (require 'supersonic-consult)
+  (require 'supersonic-browse)
+  (let ((candidates (supersonic-consult--candidates
+                     '(:artists ((:id "ar" :name "Band"))
+                       :albums ((:id "al" :name "Record" :artist "Band" :year 1999))
+                       :tracks ((:id "t1" :title "Intro" :artist "Band" :duration 65)
+                                (:id "t2" :title "Intro" :artist "Band" :duration 70))))))
+    (should (equal '("Artists" "Albums" "Songs" "Songs")
+                   (mapcar (lambda (c) (supersonic-consult--group c nil)) candidates)))
+    (should (equal '("ar" "al" "t1" "t2")
+                   (mapcar (lambda (c) (plist-get (cdr (supersonic-consult--item c)) :id)) candidates)))
+    (should-not (equal (nth 2 candidates) (nth 3 candidates)))
+    (should (string-search "1999" (supersonic-consult--annotate (nth 1 candidates))))
+    (should (string-search "1:05" (supersonic-consult--annotate (nth 2 candidates))))))
+
 (ert-deftest supersonic-tests-browse-row-start-and-end ()
   "Line start and end go to the first and last item of the line, then of
 the section; the same for lines of one item, like tracks."
