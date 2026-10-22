@@ -9393,6 +9393,30 @@ out the padding at either end and clamping clicks on the padding."
          `(mouse-1 (nil 1 (0 . 0) 0 nil 1 (0 . 0) nil (,x . 0) (220 . 20))))))
     (should (equal '(0.5 0.0 0.0 1.0) (nreverse fractions)))))
 
+(ert-deftest supersonic-tests-player-trims-up-next-to-fit ()
+  "Up next keeps the rows the window shows whole, and goes when none
+fits, leaving the rest of the page -- the controls point is on -- as
+it was."
+  (require 'supersonic-player)
+  (with-temp-buffer
+    (insert (propertize "*" 'supersonic-browse-focus t 'supersonic-browse-key '(button toggle)) "\n"
+            (propertize "\nUp next\n" 'supersonic-player-upcoming t)
+            (propertize "row one" 'supersonic-browse-list-row t) "\n"
+            (propertize "row two" 'supersonic-browse-list-row t) "\n")
+    (goto-char (point-min))
+    (let ((fits 0))
+      (cl-letf (((symbol-function 'window-body-height) (lambda (&rest _) 100))
+                ((symbol-function 'window-text-pixel-size)
+                 (lambda (_window _from to) (cons 0 (if (<= to fits) 50 200)))))
+        (setq fits (save-excursion (goto-char (point-min)) (search-forward "row one") (point)))
+        (supersonic-player--trim-upcoming 'window)
+        (should (string-search "row one" (buffer-string)))
+        (should-not (string-search "row two" (buffer-string)))
+        (setq fits 0)
+        (supersonic-player--trim-upcoming 'window)
+        (should (equal "*\n\n" (buffer-substring-no-properties (point-min) (point-max))))
+        (should (= (point) (point-min)))))))
+
 (ert-deftest supersonic-tests-player-lyrics-redraw-in-place ()
   "New lyrics replace the old ones where they are, wherever point is."
   (require 'supersonic-player)

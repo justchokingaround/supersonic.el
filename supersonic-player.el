@@ -663,7 +663,8 @@ the page looks broken.  The whole queue is a key away."
           (setq trimmed t))
         (unless last
           (delete-region heading (point-max))
-          (insert "\n")
+          ;; Not at point, which is on a control.
+          (save-excursion (goto-char (point-max)) (insert "\n"))
           (setq trimmed t))))
     (when trimmed
       (supersonic-browse--index-stops)
