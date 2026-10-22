@@ -98,6 +98,13 @@
   "Overlay drawing the accent bar of the track row in focus.")
 (defvar-local supersonic-browse--restore-row nil
   "Position of the track row to focus once the page is laid out again.")
+(declare-function supersonic-download-tracks "supersonic-download")
+(declare-function supersonic-download-albums "supersonic-download")
+(declare-function supersonic-download-album-p "supersonic-download")
+(declare-function supersonic-download-delete-album "supersonic-download")
+(defvar supersonic-download--current)
+(defvar supersonic-download--done)
+(defvar supersonic-download--pending)
 (defvar supersonic-browse-mode-map)
 (defvar isearch-mode-end-hook-quit)
 (defvar isearch-mode-end-hook-quit)
@@ -409,7 +416,14 @@ At most MAX-ROWS rows of them, if given."
      (insert (propertize "\n" 'line-height 0.6)))))
 
 (defun supersonic-browse--subtitle (item)
-  "Return the line under ITEM's tile.
+  "Return the line under ITEM's tile, marked if the album is saved offline."
+  (let ((text (supersonic-browse--subtitle-text item)))
+    (if (and (fboundp 'supersonic-download-album-p) (supersonic-download-album-p (plist-get item :id)))
+        (concat "✓ " text)
+      text)))
+
+(defun supersonic-browse--subtitle-text (item)
+  "Return what the line under ITEM's tile says.
 On an artist's own page, its albums say their year and size instead
 of the artist's name over and over."
   (cond
@@ -662,6 +676,7 @@ of its own, so they take focus like any other."
     ('playlists "Playlists")
     ('starred "Favourites")
     ('queue "Queue")
+    ('downloads "Downloads")
     ('genres "Genres")
     ('genre (plist-get page :id))
     ('playlist (or (plist-get (plist-get page :item) :name) "Playlist"))
@@ -706,6 +721,7 @@ of its own, so they take focus like any other."
    ('artists (list :artists (aio-await (supersonic-provider-artists))))
    ('playlists (list :playlists (aio-await (supersonic-provider-playlists))))
    ('starred (list :starred (aio-await (supersonic-provider-starred))))
+   ('downloads (list :albums (supersonic-download-albums)))
    ('queue
     (let ((pending (mapcar (lambda (entry)
                              (list entry
@@ -876,6 +892,25 @@ of its own, so they take focus like any other."
                        " · "))
          (insert (propertize "\n" 'line-height 1.4))
          (supersonic-browse--insert-tracks tracks)))
+      ('downloads
+       (let ((albums (plist-get content :albums))
+             (current (bound-and-true-p supersonic-download--current)))
+         (supersonic-browse--title "Downloads" (supersonic-browse--plural (length albums) "album"))
+         (when current
+           (insert (supersonic-browse--space supersonic-browse-margin)
+                   (propertize (format "Saving “%s” · %d done, %d to go"
+                                       (or (plist-get current :title) "?") supersonic-download--done
+                                       (1+ (length supersonic-download--pending)))
+                               'face 'supersonic-browse-hint)
+                   "\n"))
+         (insert "\n")
+         (if albums
+             (supersonic-browse--insert-grid 'album albums 'square)
+           (insert (supersonic-browse--space supersonic-browse-margin)
+                   (propertize (substitute-command-keys
+                                "Nothing saved yet: \\<supersonic-browse-mode-map>\\[supersonic-browse-download] on an album saves it for offline.")
+                               'face 'shadow)
+                   "\n"))))
       ('queue
        (let* ((tracks (plist-get content :tracks))
               (current (seq-position tracks t (lambda (track _) (plist-get track :queue-current))))
@@ -1674,7 +1709,6 @@ TYPE is one of `supersonic-provider-album-list-types'."
       (supersonic-playback-start (supersonic-browse--shuffled (get-text-property (point) 'supersonic-browse-ids)))
     (supersonic-browse--with-ids "Shuffling" (lambda (ids) (supersonic-playback-start (supersonic-browse--shuffled ids))))))
 
-(declare-function supersonic-download-tracks "supersonic-download")
 (declare-function supersonic-radio "supersonic-radio")
 
 (defun supersonic-browse-star ()
@@ -1699,6 +1733,12 @@ TYPE is one of `supersonic-provider-album-list-types'."
   "Show the favourite songs, albums and artists in the browser."
   (interactive)
   (supersonic-browse-visit '(:kind starred)))
+
+;;;###autoload
+(defun supersonic-browse-downloads ()
+  "Show the albums saved for offline use, and a download running."
+  (interactive)
+  (supersonic-browse-visit '(:kind downloads)))
 
 ;;;###autoload
 (defun supersonic-browse-queue ()
@@ -1893,6 +1933,28 @@ TYPE is one of `supersonic-provider-album-list-types'."
         (plist-put supersonic-browse--page :item (plist-put (copy-sequence (plist-get supersonic-browse--page :item)) :name name)))
   (supersonic-browse-reload))
 
+(defun supersonic-browse-delete ()
+  "Delete this playlist, or on the downloads page the album in focus.
+Asks first."
+  (interactive)
+  (if (not (eq (plist-get supersonic-browse--page :kind) 'downloads))
+      (supersonic-browse-playlist-delete)
+    (let ((item (get-text-property (point) 'supersonic-browse-item)))
+      (unless (plist-get item :download-dir)
+        (user-error "No saved album here"))
+      (when (yes-or-no-p (format "Delete the saved %s? " (plist-get item :name)))
+        (supersonic-download-delete-album item)
+        (message "Deleted %s" (abbreviate-file-name (plist-get item :download-dir)))))))
+
+(defun supersonic-browse--downloads-changed ()
+  "Show the downloads anew, if the browser shows them."
+  (let ((buff (get-buffer supersonic-browse-buffer-name)))
+    (when (and (buffer-live-p buff)
+               (eq (plist-get (buffer-local-value 'supersonic-browse--page buff) :kind) 'downloads))
+      (with-current-buffer buff
+        (setq supersonic-browse--content (list :albums (supersonic-download-albums)))
+        (supersonic-browse--render)))))
+
 (defun supersonic-browse-playlist-delete ()
   "Delete this playlist, after asking."
   (interactive)
@@ -1973,7 +2035,9 @@ TYPE is one of `supersonic-provider-album-list-types'."
      ("remove the song" supersonic-browse-playlist-remove)
      ("move it up / down" supersonic-browse-playlist-move-up supersonic-browse-playlist-move-down)
      ("rename the playlist" supersonic-browse-playlist-rename)
-     ("delete the playlist" supersonic-browse-playlist-delete))
+     ("delete the playlist" supersonic-browse-delete))
+    ("The downloads" downloads
+     ("delete the saved album" supersonic-browse-delete))
     ("Now playing" player
      ("go to the artist" supersonic-player-goto-artist)
      ("go to the album" supersonic-player-goto-album)
@@ -1984,12 +2048,13 @@ TYPE is one of `supersonic-provider-album-list-types'."
     ("From anywhere" prefix
      ("library" supersonic-browse)
      ("now playing" (:or supersonic-player supersonic-show-now-playing))
-     ("search" (:or supersonic-browse-search supersonic-search-read))
+     ("search" (:or supersonic-consult supersonic-browse-search supersonic-search-read))
      ("artists" supersonic-browse-artists)
      ("playlists" supersonic-browse-playlists)
      ("favourites" supersonic-browse-favourites)
      ("genres" supersonic-browse-genres)
-     ("play queue" supersonic-show-queue)
+     ("play queue" (:or supersonic-browse-queue supersonic-show-queue))
+     ("downloads" supersonic-browse-downloads)
      ("save the queue as a playlist" supersonic-save-queue-as-playlist)
      ("lyrics" supersonic-lyrics)
      ("lyrics in the echo area" supersonic-lyrics-toggle-echo-area)
@@ -2094,6 +2159,8 @@ PREFIX is put before the keys of a `prefix' section."
                                     ('playlist (and browser (eq (plist-get page :kind) 'playlist)
                                                     (supersonic-cheatsheet--entries section maps prefix)))
                                     ('player (and player (supersonic-cheatsheet--entries section maps prefix)))
+                                    ('downloads (and browser (eq (plist-get page :kind) 'downloads)
+                                                     (supersonic-cheatsheet--entries section maps prefix)))
                                     ('queue (and browser (eq (plist-get page :kind) 'queue)
                                                  (supersonic-cheatsheet--entries section maps prefix)))
                                     ('prefix (and supersonic-cheatsheet-show-prefix
@@ -2229,7 +2296,7 @@ The keys are read off the keymaps, so they are the ones bound."
     (define-key map (kbd "M-<up>") #'supersonic-browse-playlist-move-up)
     (define-key map (kbd "M-<down>") #'supersonic-browse-playlist-move-down)
     (define-key map (kbd "e") #'supersonic-browse-playlist-rename)
-    (define-key map (kbd "D") #'supersonic-browse-playlist-delete)
+    (define-key map (kbd "D") #'supersonic-browse-delete)
     (define-key map (kbd "C") #'supersonic-clear-queue)
     (define-key map (kbd "/") #'supersonic-browse-search)
     (define-key map (kbd "g") #'supersonic-browse-reload)
@@ -2307,6 +2374,7 @@ The keys are read off the keymaps, so they are the ones bound."
   (add-hook 'window-size-change-functions #'supersonic-browse--window-changed nil t)
   (add-hook 'supersonic-playback-track-change-hook #'supersonic-browse--track-changed)
   (add-hook 'supersonic-playback-queue-change-hook #'supersonic-browse--queue-changed)
+  (add-hook 'supersonic-download-change-hook #'supersonic-browse--downloads-changed)
   (setq supersonic-browse--playing nil)
   (supersonic-browse--track-changed))
 

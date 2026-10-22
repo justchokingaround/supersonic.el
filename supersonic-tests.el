@@ -9130,6 +9130,29 @@ those not shown yet, and stops once the list runs out."
           (supersonic-browse--maybe-more)
           (should (= 1 (length asked))))))))
 
+(ert-deftest supersonic-tests-download-albums-are-listed-and-marked ()
+  "A saved album's folder says which album it holds, so it is listed,
+marked in the library, and gone once deleted."
+  (require 'supersonic-download)
+  (require 'supersonic-browse)
+  (let* ((supersonic-download-directory (make-temp-file "supersonic-dl" t))
+         (supersonic-download--albums 'unknown)
+         (dir (expand-file-name "Band/Live (2001)/" supersonic-download-directory))
+         (delete-by-moving-to-trash nil)
+         (supersonic-download-change-hook nil))
+    (unwind-protect
+        (progn
+          (make-directory dir t)
+          (write-region (prin1-to-string '(:id "al1" :name "Live" :artist "Band" :year 2001)) nil
+                        (expand-file-name ".supersonic-album" dir))
+          (should (equal '("al1") (mapcar (lambda (a) (plist-get a :id)) (supersonic-download-albums))))
+          (should (equal "✓ Band · 2001" (supersonic-browse--subtitle '(:id "al1" :name "Live" :artist "Band" :year 2001))))
+          (should (equal "Band" (supersonic-browse--subtitle '(:id "al2" :name "Other" :artist "Band"))))
+          (supersonic-download-delete-album (car (supersonic-download-albums)))
+          (should-not (supersonic-download-albums))
+          (should-not (file-exists-p (expand-file-name "Band" supersonic-download-directory))))
+      (delete-directory supersonic-download-directory t))))
+
 (ert-deftest supersonic-tests-provider-album-list-passes-an-offset ()
   "An offset reaches the provider only when one is asked for."
   (let (calls)
