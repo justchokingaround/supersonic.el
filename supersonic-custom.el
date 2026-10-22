@@ -734,6 +734,11 @@ Under whatever prefix key it is bound to."
   "Face of the key hints in the browser."
   :group 'supersonic-browse)
 
+(defface supersonic-browse-hint-key
+  '((t :inherit default))
+  "Face of the keys in the browser's key hints, beside their labels."
+  :group 'supersonic-browse)
+
 ;;;; The now-playing page
 
 (defcustom supersonic-player-art-size 480

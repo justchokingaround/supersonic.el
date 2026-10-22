@@ -783,29 +783,65 @@ of its own, so they take focus like any other."
                                        map))))
        (unless (zerop steps)
          (insert (propertize "  ›  " 'face 'supersonic-browse-trail)))))
-    (let ((hints (propertize (supersonic-browse--hints) 'face 'supersonic-browse-hint))
-          (trail (supersonic--string-pixel-width (buffer-substring (line-beginning-position) (point)))))
-      ;; Only with room to spare: space aligned to the left of where the
-      ;; trail ends has no width, and the two would run into each other.
-      (when (<= (+ trail 48 (supersonic--string-pixel-width hints))
-                (+ supersonic-browse-margin (supersonic-browse--available-width)))
+    (let* ((trail (supersonic--string-pixel-width (buffer-substring (line-beginning-position) (point))))
+           ;; Room to spare after the trail: space aligned to the left of
+           ;; where it ends has no width, and the two would run together.
+           (room (- (+ supersonic-browse-margin (supersonic-browse--available-width)) trail 48))
+           (hints (supersonic-browse-hint-line (supersonic-browse--hints) supersonic-browse-mode-map room)))
+      (when (<= (supersonic--string-pixel-width hints) room)
         (insert (supersonic-browse--align (- (+ supersonic-browse-margin (supersonic-browse--available-width))
                                              (supersonic--string-pixel-width hints)))
                 hints)))
     (insert (propertize "\n" 'line-height 1.8))))
 
+(defun supersonic-browse-hint-line (hints map width)
+  "Return HINTS for keys in MAP as a line at most WIDTH pixels wide.
+HINTS are (COMMANDS . LABEL), most important first; COMMANDS is a
+command or a list of them, whose keys show joined by \"/\".  Hints
+without a key are left out, and the last one is always kept, the
+others in order while they fit."
+  (let* ((sep "   ")
+         (items
+          (delq nil
+                (mapcar
+                 (lambda (hint)
+                   (let ((keys (delq nil (mapcar (lambda (command)
+                                                   (let ((key (where-is-internal command map t)))
+                                                     (and key (key-description key))))
+                                                 (ensure-list (car hint))))))
+                     (and keys
+                          (concat (propertize (string-join keys "/") 'face 'supersonic-browse-hint-key)
+                                  " " (propertize (cdr hint) 'face 'supersonic-browse-hint)))))
+                 hints)))
+         (last (car (last items)))
+         (line "")
+         (full nil))
+    (dolist (item (butlast items))
+      (let ((longer (concat line item sep)))
+        (if (or full (> (supersonic--string-pixel-width (concat longer last)) width))
+            (setq full t)
+          (setq line longer))))
+    (concat line (or last ""))))
+
 (defun supersonic-browse--hints ()
-  "Return the key hints, read off the keys actually bound."
-  (mapconcat
-   (lambda (pair)
-     (let ((key (where-is-internal (car pair) supersonic-browse-mode-map t)))
-       (if key (concat (key-description key) " " (cdr pair)) "")))
-   '((supersonic-browse-open . "open") (supersonic-browse-play . "play")
-     (supersonic-browse-shuffle . "shuffle") (supersonic-browse-enqueue . "queue")
-     (supersonic-browse-add-to-playlist . "playlist")
-     (supersonic-browse-next-section . "section") (supersonic-browse-back . "back")
-     (supersonic-browse-search . "search") (supersonic-cheatsheet . "all keys"))
-   "   "))
+  "Return the hints for the current page: its own keys first."
+  (append
+   (pcase (plist-get supersonic-browse--page :kind)
+     ('queue '((supersonic-browse-open . "play") (supersonic-browse-playlist-remove . "remove")
+               ((supersonic-browse-playlist-move-up supersonic-browse-playlist-move-down) . "move")
+               (supersonic-clear-queue . "clear")))
+     ('playlist '((supersonic-browse-open . "open") (supersonic-browse-play . "play")
+                  (supersonic-browse-playlist-remove . "remove")
+                  ((supersonic-browse-playlist-move-up supersonic-browse-playlist-move-down) . "move")
+                  (supersonic-browse-playlist-rename . "rename") (supersonic-browse-delete . "delete")))
+     ('downloads '((supersonic-browse-open . "open") (supersonic-browse-play . "play")
+                   (supersonic-browse-delete . "delete")))
+     (_ '((supersonic-browse-open . "open") (supersonic-browse-play . "play")
+          (supersonic-browse-shuffle . "shuffle") (supersonic-browse-enqueue . "queue")
+          (supersonic-browse-download . "save") (supersonic-browse-add-to-playlist . "playlist")
+          (supersonic-browse-next-section . "section"))))
+   '((supersonic-browse-back . "back") (supersonic-browse-search . "search")
+     (supersonic-cheatsheet . "all keys"))))
 
 (defun supersonic-browse--title (title &optional subtitle)
   "Insert a page TITLE, with SUBTITLE beside it."

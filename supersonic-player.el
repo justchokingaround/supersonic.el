@@ -410,17 +410,15 @@ seen at once; what plays next may be scrolled to."
 ;;; The page
 ;;;
 
-(defun supersonic-player--hints ()
-  "Return the player's key hints, read off its keys."
-  (mapconcat
-   (lambda (pair)
-     (let ((key (where-is-internal (car pair) supersonic-player-mode-map t)))
-       (if key (concat (key-description key) " " (cdr pair)) "")))
-   '((supersonic-toggle-playing . "play/pause") (supersonic-skip-track . "next")
-     (supersonic-prev-track . "prev") (supersonic-seek-forward . "seek")
-     (supersonic-player-goto-artist . "artist")
-     (supersonic-player-goto-album . "album") (supersonic-player-library . "library"))
-   "   "))
+(defun supersonic-player--hints (width)
+  "Return the player's key hints, at most WIDTH pixels wide."
+  (supersonic-browse-hint-line
+   '((supersonic-toggle-playing . "play/pause")
+     ((supersonic-prev-track supersonic-skip-track) . "prev/next")
+     ((supersonic-seek-back supersonic-seek-forward) . "seek")
+     (supersonic-player-goto-artist . "artist") (supersonic-player-goto-album . "album")
+     (supersonic-player-library . "library") (supersonic-cheatsheet . "all keys"))
+   supersonic-player-mode-map width))
 
 (defun supersonic-player--render ()
   "Lay the page out anew, in the window showing it."
@@ -449,7 +447,7 @@ seen at once; what plays next may be scrolled to."
     (insert (propertize "\n" 'line-height 1.4)
             (supersonic-browse--space supersonic-browse-margin)
             (propertize (if (plist-get state :paused) "Paused" "Now playing") 'face 'supersonic-browse-trail-current))
-    (let ((hints (propertize (supersonic-player--hints) 'face 'supersonic-browse-hint)))
+    (let ((hints (supersonic-player--hints (- (supersonic-browse--available-width) 300))))
       (when (> (- (supersonic-browse--available-width) (supersonic--string-pixel-width hints)) 300)
         (insert (supersonic-browse--align (- (+ supersonic-browse-margin (supersonic-browse--available-width))
                                              (supersonic--string-pixel-width hints)))

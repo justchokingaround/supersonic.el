@@ -9141,6 +9141,24 @@ marked in the library, and gone once deleted."
           (should-not (file-exists-p (expand-file-name "Band" supersonic-download-directory))))
       (delete-directory supersonic-download-directory t))))
 
+(ert-deftest supersonic-tests-browse-hint-line ()
+  "Hints show the keys bound, most important first while they fit,
+always ending with the last one."
+  (require 'supersonic-browse)
+  (let ((map (make-sparse-keymap))
+        (hints '((supersonic-browse-open . "open")
+                 ((supersonic-browse-playlist-move-up supersonic-browse-playlist-move-down) . "move")
+                 (supersonic-browse-reload . "unbound") (supersonic-cheatsheet . "all keys"))))
+    (define-key map (kbd "RET") #'supersonic-browse-open)
+    (define-key map (kbd "M-p") #'supersonic-browse-playlist-move-up)
+    (define-key map (kbd "M-n") #'supersonic-browse-playlist-move-down)
+    (define-key map (kbd "?") #'supersonic-cheatsheet)
+    (should (equal "RET open   M-p/M-n move   ? all keys"
+                   (substring-no-properties (supersonic-browse-hint-line hints map 1000))))
+    ;; Batch measures in columns: room for "RET open   " and "? all keys" only.
+    (should (equal "RET open   ? all keys"
+                   (substring-no-properties (supersonic-browse-hint-line hints map 25))))))
+
 (ert-deftest supersonic-tests-provider-album-list-passes-an-offset ()
   "An offset reaches the provider only when one is asked for."
   (let (calls)
