@@ -99,10 +99,15 @@
        (run-at-time 8 nil (lambda () (setq supersonic-resume--restoring nil))))
      (message "[Supersonic] Picked up where you left off: %d track(s), paused" (length (plist-get saved :ids))))))
 
+(defun supersonic-resume--after-hang ()
+  "Put the saved queue back into the mpv started anew after one hung."
+  (ignore (supersonic-resume)))
+
 (defconst supersonic-resume--hooks
   '((supersonic-playback-track-change-hook . supersonic-resume--save-soon)
     (supersonic-playback-queue-change-hook . supersonic-resume--save-soon)
     (supersonic-playback-state-change-hook . supersonic-resume--save-soon)
+    (supersonic-mpv-hang-hook . supersonic-resume--after-hang)
     (kill-emacs-hook . supersonic-resume--save-on-exit))
   "When the queue is saved.")
 

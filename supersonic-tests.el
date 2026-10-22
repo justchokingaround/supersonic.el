@@ -9037,6 +9037,27 @@ the line's index and time for seeking."
             (should (search-forward "♪" nil t)))
         (kill-buffer)))))
 
+(ert-deftest supersonic-tests-mpv-killed-when-it-stops-answering ()
+  "mpv is killed, and the hang hook run, once it has left requests
+unanswered for longer than the reply timeout, not on the first miss."
+  (require 'supersonic-mpv)
+  (let ((supersonic-mpv--first-miss nil)
+        (supersonic-mpv-reply-timeout 2)
+        (supersonic-mpv-hang-hook nil)
+        (killed 0) (hooked 0))
+    (add-hook 'supersonic-mpv-hang-hook (lambda () (cl-incf hooked)))
+    (cl-letf (((symbol-function 'supersonic-mpv-live-p) #'always)
+              ((symbol-function 'supersonic-mpv-kill) (lambda () (cl-incf killed)))
+              ((symbol-function 'message) #'ignore))
+      (supersonic-mpv--missed-reply)
+      (supersonic-mpv--missed-reply)    ; same moment: still just a miss
+      (should (= 0 killed))
+      (setq supersonic-mpv--first-miss (- (float-time) 3))
+      (supersonic-mpv--missed-reply)
+      (should (= 1 killed))
+      (should (= 1 hooked))
+      (should-not supersonic-mpv--first-miss))))
+
 (ert-deftest supersonic-tests-browse-row-start-and-end ()
   "Line start and end go to the first and last item of the line, then of
 the section; the same for lines of one item, like tracks."

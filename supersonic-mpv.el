@@ -344,6 +344,29 @@ was sent, nil if mpv is not running, in which case CALLBACK is dropped."
       (message "MPV not running")
       nil)))
 
+(defvar supersonic-mpv--first-miss nil
+  "When mpv first left a request unanswered since it last answered one.")
+
+(defvar supersonic-mpv-hang-hook nil
+  "Hook run after mpv stopped answering and was killed.
+`supersonic-resume-mode' puts the saved queue back from here.")
+
+(defun supersonic-mpv--missed-reply ()
+  "Note that mpv left a request unanswered; kill it if it keeps doing so.
+An mpv that answers nothing for longer than twice
+`supersonic-mpv-reply-timeout' has hung, and is killed, so that the
+next command starts a fresh one."
+  (when (supersonic-mpv-live-p)
+    (let ((now (float-time)))
+      (if (not supersonic-mpv--first-miss)
+          (setq supersonic-mpv--first-miss now)
+        (when (>= (- now supersonic-mpv--first-miss) supersonic-mpv-reply-timeout)
+          (setq supersonic-mpv--first-miss nil)
+          (supersonic--log "mpv stopped answering; killing it")
+          (supersonic-mpv-kill)
+          (message "[Supersonic] mpv stopped answering, so it was restarted")
+          (run-hooks 'supersonic-mpv-hang-hook))))))
+
 (aio-defun
  supersonic-mpv-get-property (name)
  "Return a promise resolving to mpv's current value of property NAME.
@@ -355,9 +378,11 @@ command, say -- hanging too."
         (timer (run-at-time supersonic-mpv-reply-timeout nil
                             (lambda ()
                               (unless (aio-result promise)
-                                (aio-resolve promise (lambda () nil)))))))
+                                (aio-resolve promise (lambda () nil))
+                                (supersonic-mpv--missed-reply))))))
    (if (supersonic-mpv-command-with-callback (lambda (response)
                                                (cancel-timer timer)
+                                               (setq supersonic-mpv--first-miss nil)
                                                (unless (aio-result promise)
                                                  (aio-resolve promise (lambda () (alist-get 'data response)))))
                                              "get_property" name)
