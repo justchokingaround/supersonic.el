@@ -766,6 +766,7 @@ is non-nil."
 (defvar-local supersonic-lyrics--current-overlay nil "Overlay on the line being sung.")
 (defvar-local supersonic-lyrics--past-overlay nil "Overlay on the lines already sung.")
 (defvar-local supersonic-lyrics--set-point nil "Where following last put point.")
+(defvar-local supersonic-lyrics--width nil "Body width in pixels the lyrics were centred for.")
 
 (defun supersonic-lyrics--buffer ()
   "Return the lyrics buffer if it is live, else nil."
@@ -780,56 +781,83 @@ is non-nil."
          (let ((match (text-property-search-forward 'supersonic-lyrics-index index #'eql)))
            (and match (prop-match-beginning match))))))
 
+(defun supersonic-lyrics--centered (text &rest properties)
+  "Return TEXT with PROPERTIES, led by space centring it, and a newline.
+The newline is included, so that a line and its translation make one
+stretch of the same properties."
+  ;; shortcut: a line wider than the window wraps uncentred; fine for lyrics.
+  (let ((half (/ (supersonic--string-pixel-width text) 2)))
+    (apply #'propertize
+           (concat (propertize " " 'display `(space :align-to (- center (,half)))) text "\n")
+           properties)))
+
 (defun supersonic-lyrics--render-buffer ()
   "Redraw the lyrics buffer from the current lyrics state."
   (let ((buff (supersonic-lyrics--buffer)))
     (when buff
-      (with-current-buffer buff
-        (let ((inhibit-read-only t)
-              (track supersonic-lyrics--track)
-              (lyrics supersonic-lyrics--lyrics))
-          (erase-buffer)
-          (when track
-            (insert (propertize (or (plist-get track :title) "") 'face 'bold) "\n")
-            (insert (propertize (string-join (delq nil (list (plist-get track :artist) (plist-get track :album)))
-                                             " — ")
-                                'face 'shadow)
-                    "\n"))
-          (when lyrics
-            (insert (propertize (format "%s · %s%s\n" (if (plist-get lyrics :synced) "synced" "not synced")
-                                        (or (plist-get lyrics :source) "?")
-                                        (cond ((plist-get lyrics :translation)
-                                               (format " · translation: %s%s"
-                                                       (plist-get lyrics :translation-source)
-                                                       (if supersonic-lyrics-show-translation "" " (hidden)")))
-                                              (t "")))
-                                'face 'shadow)))
-          (insert "\n")
-          (pcase supersonic-lyrics--status
-            ('nil (insert (propertize "Nothing playing." 'face 'shadow)))
-            ('loading (insert (propertize "Looking for lyrics…" 'face 'shadow)))
-            ('none (insert (propertize "No lyrics found." 'face 'shadow)))
-            (_
+      ;; Measured in the buffer's own window, as timers run with
+      ;; another frame selected.
+      (let ((window (get-buffer-window buff t)))
+        (if window
+            (with-selected-window window (supersonic-lyrics--render-here))
+          (with-current-buffer buff (supersonic-lyrics--render-here)))))))
+
+(defun supersonic-lyrics--render-here ()
+  "Redraw the current buffer, the lyrics buffer, from the lyrics state."
+  (let ((inhibit-read-only t)
+        (track supersonic-lyrics--track)
+        (lyrics supersonic-lyrics--lyrics))
+    (erase-buffer)
+    (insert "\n")
+    (when track
+      (insert (supersonic-lyrics--centered (propertize (or (plist-get track :title) "")
+                                                       'face '(bold (:height 1.3)))))
+      (insert (supersonic-lyrics--centered
+               (propertize (string-join (delq nil (list (plist-get track :artist) (plist-get track :album)))
+                                        " · ")
+                           'face 'shadow))))
+    (when lyrics
+      (insert (supersonic-lyrics--centered
+               (propertize (format "%s · %s%s" (if (plist-get lyrics :synced) "synced" "not synced")
+                                   (or (plist-get lyrics :source) "?")
+                                   (cond ((plist-get lyrics :translation)
+                                          (format " · translation: %s%s"
+                                                  (plist-get lyrics :translation-source)
+                                                  (if supersonic-lyrics-show-translation "" " (hidden)")))
+                                         (t "")))
+                           'face '(shadow (:height 0.85))))))
+    (insert "\n")
+    (pcase supersonic-lyrics--status
+      ('nil (insert (supersonic-lyrics--centered (propertize "Nothing playing." 'face 'shadow))))
+      ('loading (insert (supersonic-lyrics--centered (propertize "Looking for lyrics…" 'face 'shadow))))
+      ('none (insert (supersonic-lyrics--centered (propertize "No lyrics found." 'face 'shadow))))
+      (_
              (let ((index 0))
-               (dolist (line (plist-get lyrics :lines))
-                 (let ((translation (supersonic-lyrics--translation-text index))
-                       (properties (list 'supersonic-lyrics-index index
-                                         'supersonic-lyrics-ms (car line)
-                                         'mouse-face (and (car line) 'highlight)
-                                         'help-echo (and (car line) "mouse-1: play from this line"))))
-                   ;; Newlines included, so a line and its translation
-                   ;; make one stretch of the same index.
-                   (insert (apply #'propertize
-                                  (concat (if (and (car line) (string-empty-p (cdr line))) "♪" (cdr line)) "\n")
-                                  properties))
-                   (when translation
-                     (insert (apply #'propertize (concat "  " translation "\n")
-                                    'face 'supersonic-lyrics-translation properties))))
-                 (setq index (1+ index))))))
-          (setq supersonic-lyrics--follow t)
-          (goto-char (point-min))
-          (setq supersonic-lyrics--set-point (point))
-          (supersonic-lyrics--highlight))))))
+         (dolist (line (plist-get lyrics :lines))
+           (let ((translation (supersonic-lyrics--translation-text index))
+                 (properties (list 'supersonic-lyrics-index index
+                                   'supersonic-lyrics-ms (car line)
+                                   'mouse-face (and (car line) 'highlight)
+                                   'help-echo (and (car line) "mouse-1: play from this line"))))
+             (insert (apply #'supersonic-lyrics--centered
+                            (if (and (car line) (string-empty-p (cdr line))) "♪" (cdr line))
+                            properties))
+             (when translation
+               (insert (apply #'supersonic-lyrics--centered
+                              (propertize translation 'face 'supersonic-lyrics-translation)
+                              properties))))
+           (setq index (1+ index))))))
+    (setq supersonic-lyrics--width (window-body-width nil t)
+          supersonic-lyrics--follow t)
+    (goto-char (point-min))
+    (setq supersonic-lyrics--set-point (point))
+    (supersonic-lyrics--highlight)))
+
+(defun supersonic-lyrics--window-changed (window)
+  "Centre the lyrics anew if WINDOW, showing them, changed width."
+  (with-current-buffer (window-buffer window)
+    (unless (eql supersonic-lyrics--width (window-body-width window t))
+      (supersonic-lyrics--render-buffer))))
 
 (defun supersonic-lyrics--highlight ()
   "Highlight the line being sung in the lyrics buffer and scroll it into view."
@@ -939,7 +967,9 @@ is non-nil."
   "Major mode for the lyrics buffer opened by `supersonic-lyrics'.
 \\{supersonic-lyrics-mode-map}"
   (buffer-disable-undo)
-  (setq-local cursor-type nil)
+  (setq-local cursor-type nil
+              line-spacing 0.5)
+  (add-hook 'window-size-change-functions #'supersonic-lyrics--window-changed nil t)
   (add-hook 'post-command-hook #'supersonic-lyrics--notice-motion nil t))
 
 ;;;###autoload

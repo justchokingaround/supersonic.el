@@ -526,7 +526,7 @@ Needs `supersonic-lyrics-translate-function'."
   :group 'supersonic-lyrics)
 
 (defface supersonic-lyrics-current
-  '((t :inherit (bold highlight) :extend t))
+  '((t :inherit (bold supersonic-browse-accent)))
   "Face of the synced lyrics line being sung."
   :group 'supersonic-lyrics)
 

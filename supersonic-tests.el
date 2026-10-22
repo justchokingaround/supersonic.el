@@ -9017,6 +9017,26 @@ RET on a row plays that entry rather than starting a new queue."
          (supersonic-browse-open))))
     (should (equal '(1) played))))
 
+(ert-deftest supersonic-tests-lyrics-buffer-centres-lines ()
+  "The lyrics buffer centres each line and its translation, which keep
+the line's index and time for seeking."
+  (require 'supersonic-lyrics)
+  (let ((supersonic-lyrics--track '(:title "Song" :artist "Band"))
+        (supersonic-lyrics--lyrics '(:synced t :source "test" :lines ((1000 . "Hello") (2000 . ""))))
+        (supersonic-lyrics--status 'found)
+        (supersonic-lyrics--index nil))
+    (with-current-buffer (get-buffer-create supersonic-lyrics-buffer-name)
+      (unwind-protect
+          (progn
+            (supersonic-lyrics-mode)
+            (supersonic-lyrics--render-buffer)
+            (goto-char (point-min))
+            (search-forward "Hello")
+            (should (eql 1000 (get-text-property (line-beginning-position) 'supersonic-lyrics-ms)))
+            (should (eq 'space (car-safe (get-text-property (line-beginning-position) 'display))))
+            (should (search-forward "♪" nil t)))
+        (kill-buffer)))))
+
 (ert-deftest supersonic-tests-browse-row-start-and-end ()
   "Line start and end go to the first and last item of the line, then of
 the section; the same for lines of one item, like tracks."
