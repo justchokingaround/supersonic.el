@@ -900,6 +900,12 @@ others in order while they fit."
       (when (and playlists (not sections))
         (supersonic-browse--heading "Your playlists" "See all" #'supersonic-browse-playlists)
         (supersonic-browse--insert-grid 'playlist playlists 'square 1))
+      ;; Server ids: under the local provider the downloads page maps them.
+      (let ((saved (and (fboundp 'supersonic-download-albums) (not (eq supersonic-provider 'local))
+                        (supersonic-download-albums))))
+        (when saved
+          (supersonic-browse--heading "Saved for offline" "See all" #'supersonic-browse-downloads)
+          (supersonic-browse--insert-grid 'album saved 'square 1)))
       (when (plist-get content :genres)
         (supersonic-browse--heading "Genres" "See all" #'supersonic-browse-genres)
         (supersonic-browse--insert-grid 'genre (plist-get content :genres) 'square 1)))))
