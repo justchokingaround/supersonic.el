@@ -75,6 +75,8 @@
 (defvar-local supersonic-browse--back nil "Pages visited before, most recent first.")
 (defvar-local supersonic-browse--forward nil "Pages gone back from, most recent first.")
 (defvar-local supersonic-browse--content nil "What the page shows, as its loader resolved it.")
+(defvar-local supersonic-browse--more nil
+  "Non-nil while more of an album list loads; `done' once it ran out.")
 (defvar-local supersonic-browse--selected nil "Key of the item in focus.")
 (defvar-local supersonic-browse--width nil "Window width in pixels the page was laid out for.")
 (defvar-local supersonic-browse--generation 0 "Bumped per page load, so stale loads are dropped.")
@@ -1260,7 +1262,57 @@ scroll, which with a tall image in view is like being stuck."
            (pos (and i (aref supersonic-browse--stops i))))
       (when (and pos (pos-visible-in-window-p pos))
         (goto-char pos))))
-  (supersonic-browse--update-focus))
+  (supersonic-browse--update-focus)
+  (supersonic-browse--maybe-more))
+
+(defun supersonic-browse--maybe-more ()
+  "Load more of an album list once focus nears its end, and add them."
+  (when (and (eq (plist-get supersonic-browse--page :kind) 'albums)
+             supersonic-browse--content
+             (not supersonic-browse--more)
+             (let ((i (supersonic-browse--key-index supersonic-browse--selected)))
+               ;; About two rows of tiles before the end.
+               (and i (>= i (- (supersonic-browse--stop-count) 12)))))
+    (let* ((buff (current-buffer))
+           (generation supersonic-browse--generation)
+           (albums (plist-get supersonic-browse--content :albums))
+           (count supersonic-album-list-count))
+      (setq supersonic-browse--more t)
+      (aio-listen
+       (aio-catch (supersonic-provider-album-list (plist-get supersonic-browse--page :type) count (length albums)))
+       (lambda (value)
+         (let ((outcome (funcall value)))
+           (when (and (buffer-live-p buff) (= generation (buffer-local-value 'supersonic-browse--generation buff)))
+             (with-current-buffer buff
+               (let* ((ids (mapcar (lambda (album) (plist-get album :id)) albums))
+                      (new (and (eq (car outcome) :success)
+                                ;; A random list may come up with some again.
+                                (seq-remove (lambda (album) (member (plist-get album :id) ids)) (cdr outcome)))))
+                 (setq supersonic-browse--more (and (or (null new) (< (length (cdr outcome)) count)) 'done))
+                 (when new
+                   (setq supersonic-browse--content
+                         (plist-put (copy-sequence supersonic-browse--content) :albums (append albums new)))
+                   (supersonic-browse--render)))))))))))
+
+(defun supersonic-browse--sort-name (name)
+  "Return NAME as lists sort it: lower case, without a leading article."
+  (let ((case-fold-search t))
+    (downcase (replace-regexp-in-string "\\`\\(the\\|an?\\) +" "" name))))
+
+(defun supersonic-browse-jump (char)
+  "Focus the first artist or album whose name starts with CHAR.
+A leading \"The\" or \"A\" does not count, as in sorted lists."
+  (interactive (list (read-char "Jump to: ")))
+  (let ((prefix (downcase (char-to-string char)))
+        (found nil))
+    (dotimes (i (supersonic-browse--stop-count))
+      (unless found
+        (when (and (memq (car-safe (supersonic-browse--prop i 'supersonic-browse-key)) '(artist album))
+                   (string-prefix-p prefix (supersonic-browse--sort-name
+                                            (or (plist-get (supersonic-browse--prop i 'supersonic-browse-item) :name) ""))))
+          (setq found i))))
+    (unless (supersonic-browse--goto-index found)
+      (user-error "Nothing here starts with %s" prefix))))
 
 (defun supersonic-browse--isearch-done ()
   "Focus the item a search ended on, scrolling to it if need be."
@@ -1442,7 +1494,8 @@ scroll, which with a tall image in view is like being stuck."
  (let ((page (buffer-local-value 'supersonic-browse--page buff))
        (generation (with-current-buffer buff (cl-incf supersonic-browse--generation))))
    (with-current-buffer buff
-     (setq supersonic-browse--content nil)
+     (setq supersonic-browse--content nil
+           supersonic-browse--more nil)
      (supersonic-browse--render))
    (condition-case err
        (let ((content (aio-await (supersonic-browse--load-content page))))
@@ -1909,6 +1962,7 @@ TYPE is one of `supersonic-provider-album-list-types'."
      ("back / forward" supersonic-browse-back supersonic-browse-forward)
      ("home" supersonic-browse-home)
      ("search" supersonic-browse-search)
+     ("jump to a letter" supersonic-browse-jump)
      ("reload" supersonic-browse-reload))
     ("The queue" queue
      ("play this one" supersonic-browse-open)
@@ -2166,6 +2220,7 @@ The keys are read off the keymaps, so they are the ones bound."
     (define-key map (kbd "h") #'supersonic-browse-home)
     (define-key map (kbd "A") #'supersonic-browse-add-to-playlist)
     (define-key map (kbd "S") #'supersonic-browse-download)
+    (define-key map (kbd "j") #'supersonic-browse-jump)
     (define-key map (kbd "x") #'supersonic-browse-radio)
     (define-key map (kbd "*") #'supersonic-browse-star)
     (define-key map (kbd "d") #'supersonic-browse-playlist-remove)

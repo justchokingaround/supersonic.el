@@ -466,8 +466,8 @@ A track gets the ids of its album and album artist added."
                      (if (/= ya yb) (< ya yb) (supersonic-local--name< a b))))))))
 
 (aio-defun
- supersonic-local--album-list (type count)
- "Resolve to at most COUNT local albums of list TYPE."
+ supersonic-local--album-list (type count &optional offset)
+ "Resolve to at most COUNT local albums of list TYPE, after OFFSET."
  (aio-await (supersonic-local--ensure-index))
  (let* ((all (hash-table-values supersonic-local--albums))
         (albums
@@ -490,7 +490,7 @@ A track gets the ids of its album and album artist added."
                        supersonic-local--counts)
               (mapcar #'cdr (sort played (lambda (a b) (> (car a) (car b)))))))
            (_ (user-error "The local files have no `%s' album list" type)))))
-   (mapcar #'supersonic-local--public (seq-take albums count))))
+   (mapcar #'supersonic-local--public (seq-take (nthcdr (or offset 0) albums) count))))
 
 (aio-defun
  supersonic-local--album-tracks (id) "Resolve to the tracks of local album ID, in album order."

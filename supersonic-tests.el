@@ -9093,6 +9093,52 @@ name cannot hold replaced, and their lyrics as LRC."
                  (supersonic-download--lrc '(:lines ((62500 . "Hello") (nil . "Plain"))))))
   (should (equal "\"a\\\"b\\\\c\"\n" (supersonic-download--config-string "a\"b\\c"))))
 
+(ert-deftest supersonic-tests-browse-jump-to-letter ()
+  "Jumping to a letter focuses the first artist or album named so,
+leaving out a leading article."
+  (supersonic-tests--with-browse-stops
+      '(((artist "1") 1 1 0 0) ((artist "2") 1 1 0 1 same-line) ((artist "3") 1 1 0 2 same-line))
+    (dotimes (i 3)
+      (let ((inhibit-read-only t)) (put-text-property (aref supersonic-browse--stops i) (1+ (aref supersonic-browse--stops i))
+                         'supersonic-browse-item (list :name (nth i '("ABBA" "The Beatles" "Björk"))))))
+    (supersonic-browse-jump ?b)
+    (should (equal '(artist "2") (supersonic-tests--browse-at)))
+    (should-error (supersonic-browse-jump ?z) :type 'user-error)))
+
+(ert-deftest supersonic-tests-browse-album-list-loads-more ()
+  "Focus near the end of an album list loads the albums after it, adds
+those not shown yet, and stops once the list runs out."
+  (let ((albums (mapcar (lambda (i) (list :id (format "a%d" i))) (number-sequence 1 12)))
+        asked)
+    (supersonic-tests--with-browse-stops
+        (mapcar (lambda (i) (list (list 'album (format "a%d" i)) 1 1 0 i t)) (number-sequence 1 12))
+      (supersonic-tests--with-provider
+          `((album-list . ,(lambda (type count offset)
+                             (push (list type count offset) asked)
+                             (funcall (supersonic-tests--resolved '((:id "a12") (:id "a13") (:id "a14")))))))
+        (setq supersonic-browse--page '(:kind albums :type newest)
+              supersonic-browse--content (list :albums albums)
+              supersonic-browse--selected '(album "a12"))
+        (cl-letf (((symbol-function 'supersonic-browse--render) #'ignore))
+          (supersonic-browse--maybe-more)
+          (with-timeout (2) (while (eq supersonic-browse--more t) (accept-process-output nil 0.01)))
+          (should (equal (list (list 'newest supersonic-album-list-count 12)) asked))
+          (should (equal '("a13" "a14")
+                         (mapcar (lambda (a) (plist-get a :id))
+                                 (nthcdr 12 (plist-get supersonic-browse--content :albums)))))
+          (should (eq 'done supersonic-browse--more))
+          (supersonic-browse--maybe-more)
+          (should (= 1 (length asked))))))))
+
+(ert-deftest supersonic-tests-provider-album-list-passes-an-offset ()
+  "An offset reaches the provider only when one is asked for."
+  (let (calls)
+    (supersonic-tests--with-provider
+        `((album-list . ,(lambda (&rest args) (push args calls) (funcall (supersonic-tests--resolved nil)))))
+      (aio-wait-for (supersonic-provider-album-list 'newest 10))
+      (aio-wait-for (supersonic-provider-album-list 'newest 10 20)))
+    (should (equal '((newest 10) (newest 10 20)) (nreverse calls)))))
+
 (ert-deftest supersonic-tests-browse-row-start-and-end ()
   "Line start and end go to the first and last item of the line, then of
 the section; the same for lines of one item, like tracks."

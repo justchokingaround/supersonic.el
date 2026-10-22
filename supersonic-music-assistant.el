@@ -536,20 +536,22 @@ it does not know."
            `(,@(supersonic-music-assistant--item-args uri) ("in_library_only" . t))))))
 
 (aio-defun
- supersonic-music-assistant--album-list (type count)
- "Return a promise resolving to at most COUNT albums of list TYPE.
+ supersonic-music-assistant--album-list (type count &optional offset)
+ "Return a promise resolving to at most COUNT albums of list TYPE, after OFFSET.
 For `recent', those of the tracks last played, as
 `supersonic-music-assistant--recent-albums' finds them; for any other
 TYPE, library albums asked of `music/albums/library_items' in the
 order `supersonic-music-assistant--album-list-args' maps TYPE to."
  (let ((args (alist-get type supersonic-music-assistant--album-list-args)))
    (mapcar #'supersonic-music-assistant--album
-           (aio-await
-            (cond
-             ((eq type 'recent) (supersonic-music-assistant--recent-albums count))
-             (args (supersonic-music-assistant--command
-                    "music/albums/library_items" `(("limit" . ,count) ,@args)))
-             (t (user-error "Music Assistant has no `%s' album list" type)))))))
+           (cond
+            ((eq type 'recent)
+             (nthcdr (or offset 0)
+                     (aio-await (supersonic-music-assistant--recent-albums (+ count (or offset 0))))))
+            (args (aio-await (supersonic-music-assistant--command
+                              "music/albums/library_items"
+                              `(("limit" . ,count) ,@(and offset `(("offset" . ,offset))) ,@args))))
+            (t (user-error "Music Assistant has no `%s' album list" type))))))
 
 (aio-defun
  supersonic-music-assistant--recent-albums (count)

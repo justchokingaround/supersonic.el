@@ -186,8 +186,8 @@ only the first channel in it is read."
 
 (aio-defun
  supersonic-subsonic--album-list
- (type count)
- "Return a promise resolving to at most COUNT albums of list TYPE.
+ (type count &optional offset)
+ "Return a promise resolving to at most COUNT albums of list TYPE, after OFFSET.
 Asks getAlbumList2.  TYPE is one of
 `supersonic-provider-album-list-types', each of which is also the
 name getAlbumList2 knows that list under."
@@ -195,7 +195,8 @@ name getAlbumList2 knows that list under."
   (aio-await
    (supersonic-get-json
     (supersonic-build-url
-     "/getAlbumList2.view" `(("type" . ,(symbol-name type)) ("size" . ,(number-to-string count))))))))
+     "/getAlbumList2.view" `(("type" . ,(symbol-name type)) ("size" . ,(number-to-string count))
+                             ,@(and offset `(("offset" . ,(number-to-string offset))))))))))
 
 (aio-defun
  supersonic-subsonic--album-tracks

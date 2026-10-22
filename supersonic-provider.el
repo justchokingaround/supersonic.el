@@ -81,8 +81,10 @@ promise.
   albums.
 - `album-list' takes a TYPE, one of `recent' (recently played),
   `random', `newest' (recently added), `frequent' (most played) or
-  `starred' (favourites), and a COUNT, and resolves to
-  at most COUNT albums across all artists.  A provider that cannot
+  `starred' (favourites), a COUNT and optionally an OFFSET, and
+  resolves to at most COUNT albums across all artists, after the
+  first OFFSET of them; it is passed an OFFSET only when one is
+  asked for.  A provider that cannot
   produce a given TYPE signals a `user-error' saying so.
 - `album-tracks' takes an album id and resolves to its tracks, in
   album order.
@@ -242,12 +244,13 @@ For a command to call before prompting or opening a buffer."
  (aio-await (supersonic-provider--call 'artist-albums artist-id)))
 
 (aio-defun
- supersonic-provider-album-list (type count)
+ supersonic-provider-album-list (type count &optional offset)
  "Return a promise resolving to at most COUNT albums of list TYPE.
-TYPE is one of `supersonic-provider-album-list-types'."
+TYPE is one of `supersonic-provider-album-list-types'.  With OFFSET,
+the albums after the first OFFSET of the list."
  (unless (memq type supersonic-provider-album-list-types)
    (error "Unknown album list type `%s'" type))
- (aio-await (supersonic-provider--call 'album-list type count)))
+ (aio-await (apply #'supersonic-provider--call 'album-list type count (and offset (list offset)))))
 
 (aio-defun
  supersonic-provider-album-tracks (album-id)
