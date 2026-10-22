@@ -988,7 +988,7 @@ others in order while they fit."
          ;; Rows keep their place in the queue, whichever section shows them.
          (cl-loop for track in tracks for i from 0
                   do (plist-put track :queue-index i)
-                  when (and current (< i current)) do (plist-put track :queue-played t))
+                  do (plist-put track :queue-played (and current (< i current))))
          (supersonic-browse--title "Queue"
                                    (string-join (delq nil (list (supersonic-browse--plural (length tracks) "song")
                                                                 (and left (concat (supersonic-browse--total left) " left"))))
@@ -1596,7 +1596,7 @@ scroll, which with a tall image in view is like being stuck."
     (while (and (< j n) (eql (supersonic-browse--prop j 'supersonic-browse-region) region))
       (setq j (1+ j)))
     (when (> n 0)
-      (supersonic-browse--goto-index
+      (supersonic-browse--goto-section
        (supersonic-browse--region-first (supersonic-browse--prop (if (< j n) j 0) 'supersonic-browse-region))))))
 
 (defun supersonic-browse-previous-section ()
@@ -1609,8 +1609,27 @@ scroll, which with a tall image in view is like being stuck."
     (while (and (>= j 0) (eql (supersonic-browse--prop j 'supersonic-browse-region) region))
       (setq j (1- j)))
     (when (> n 0)
-      (supersonic-browse--goto-index
+      (supersonic-browse--goto-section
        (supersonic-browse--region-first (supersonic-browse--prop (if (>= j 0) j (1- n)) 'supersonic-browse-region))))))
+
+(defun supersonic-browse--goto-section (i)
+  "Focus stop I, the first of a section, with the section's heading in view.
+The first section shows the page from its top; any other, if its
+heading is out of view, scrolls so the heading is at the top."
+  (when (supersonic-browse--goto-index i)
+    (let ((window (get-buffer-window (current-buffer)))
+          (heading (save-excursion
+                     (let ((match (text-property-search-backward 'supersonic-browse-section t t)))
+                       (and match
+                            ;; Its own heading: no other item between it and this one.
+                            (or (zerop i)
+                                (> (prop-match-beginning match) (aref supersonic-browse--stops (1- i))))
+                            (prop-match-beginning match))))))
+      (when window
+        (cond ((zerop i)
+               (set-window-start window (point-min)))
+              ((and heading (not (pos-visible-in-window-p heading window)))
+               (set-window-start window (save-excursion (goto-char heading) (line-beginning-position)))))))))
 
 ;;;
 ;;; Visiting pages
@@ -1703,6 +1722,22 @@ scroll, which with a tall image in view is like being stuck."
   "Load the page anew."
   (interactive)
   (ignore (supersonic-browse--load (current-buffer))))
+
+(defun supersonic-browse--refresh (&optional buff)
+  "Load the page of BUFF (the current buffer) anew, showing it as it was meanwhile.
+Unlike `supersonic-browse-reload', the page is not blanked to say it
+is loading, so a change to it does not flash."
+  (let* ((buff (or buff (current-buffer)))
+         (page (buffer-local-value 'supersonic-browse--page buff))
+         (generation (buffer-local-value 'supersonic-browse--generation buff)))
+    (aio-listen (aio-catch (supersonic-browse--load-content page))
+                (lambda (value)
+                  (let ((outcome (funcall value)))
+                    (when (and (eq (car outcome) :success) (buffer-live-p buff)
+                               (= generation (buffer-local-value 'supersonic-browse--generation buff)))
+                      (with-current-buffer buff
+                        (setq supersonic-browse--content (cdr outcome))
+                        (supersonic-browse--render))))))))
 
 ;;;###autoload
 (defun supersonic-browse ()
@@ -1855,7 +1890,7 @@ says right there that something was done to the item."
                        (plist-put (copy-sequence (plist-get supersonic-browse--page :item)) :starred flag))))
     (message (if flag "♥ %s is a favourite" "%s is no longer a favourite")
              (or (plist-get item :name) (plist-get item :title) "It"))
-    (supersonic-browse-reload)))
+    (supersonic-browse--refresh)))
 
 ;;;###autoload
 (defun supersonic-browse-favourites ()
@@ -2006,7 +2041,7 @@ says right there that something was done to the item."
         (aio-wait-for (supersonic-provider-edit-playlist (plist-get target :id) (list :add ids)))
         (message "Added %s to %s" (supersonic-browse--plural (length ids) "song") (plist-get target :name))
         (when (equal (plist-get target :id) (plist-get supersonic-browse--page :id))
-          (supersonic-browse-reload))))))
+          (supersonic-browse--refresh))))))
 
 (defun supersonic-browse--playlist-row ()
   "Return the position of the playlist or queue track in focus, or complain."
@@ -2025,7 +2060,7 @@ says right there that something was done to the item."
     (if (eq (plist-get supersonic-browse--page :kind) 'queue)
         (supersonic-playback-remove row)
       (aio-wait-for (supersonic-provider-edit-playlist (plist-get supersonic-browse--page :id) (list :remove (list row))))
-      (supersonic-browse-reload))))
+      (supersonic-browse--refresh))))
 
 (defun supersonic-browse--playlist-move (delta)
   "Move the song in focus DELTA places in this playlist or the queue."
@@ -2033,12 +2068,23 @@ says right there that something was done to the item."
          (ids (vconcat (mapcar (lambda (track) (plist-get track :id)) (plist-get supersonic-browse--content :tracks))))
          (to (+ row delta)))
     (when (and (>= to 0) (< to (length ids)))
-      (setq supersonic-browse--restore-row to)
+      ;; Shown moved at once; the server or player catches up after.
+      (let ((tracks (vconcat (plist-get supersonic-browse--content :tracks))))
+        (cl-rotatef (aref tracks row) (aref tracks to))
+        (setq supersonic-browse--content (plist-put (copy-sequence supersonic-browse--content)
+                                                    :tracks (append tracks nil))
+              supersonic-browse--restore-row to)
+        (supersonic-browse--render))
       (if (eq (plist-get supersonic-browse--page :kind) 'queue)
           (supersonic-playback-move row to)
         (cl-rotatef (aref ids row) (aref ids to))
-        (aio-wait-for (supersonic-provider-set-playlist-tracks (plist-get supersonic-browse--page :id) (append ids nil)))
-        (supersonic-browse-reload)))))
+        (let ((buff (current-buffer)))
+          (aio-listen (aio-catch (supersonic-provider-set-playlist-tracks (plist-get supersonic-browse--page :id)
+                                                                          (append ids nil)))
+                      (lambda (value)
+                        (when (eq (car (funcall value)) :error)
+                          (message "[Supersonic] The playlist could not be reordered")
+                          (supersonic-browse--refresh buff)))))))))
 
 (defun supersonic-browse-playlist-move-up ()
   "Move the song in focus one place up this playlist."
@@ -2060,7 +2106,7 @@ says right there that something was done to the item."
   (aio-wait-for (supersonic-provider-edit-playlist (plist-get supersonic-browse--page :id) (list :name name)))
   (setq supersonic-browse--page
         (plist-put supersonic-browse--page :item (plist-put (copy-sequence (plist-get supersonic-browse--page :item)) :name name)))
-  (supersonic-browse-reload))
+  (supersonic-browse--refresh))
 
 (defun supersonic-browse-delete ()
   "Delete this playlist, or on the downloads page the album in focus.
@@ -2402,7 +2448,7 @@ The keys are read off the keymaps, so they are the ones bound."
                             (when (memq (plist-get supersonic-browse--page :kind) '(album search))
                               (supersonic-browse--render)))
                           (when (eq (plist-get supersonic-browse--page :kind) 'queue)
-                            (supersonic-browse-reload))))))))))
+                            (supersonic-browse--refresh))))))))))
 
 (defun supersonic-browse--queue-changed ()
   "Show the queue anew, if the browser shows it."
@@ -2410,7 +2456,7 @@ The keys are read off the keymaps, so they are the ones bound."
     (when (and (buffer-live-p buff)
                (eq (plist-get (buffer-local-value 'supersonic-browse--page buff) :kind) 'queue))
       (with-current-buffer buff
-        (supersonic-browse-reload)))))
+        (supersonic-browse--refresh)))))
 
 (defun supersonic-browse--window-changed (window)
   "Lay the page out again if WINDOW, showing it, changed width."
