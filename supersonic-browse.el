@@ -1621,6 +1621,7 @@ TYPE is one of `supersonic-provider-album-list-types'."
       (supersonic-playback-start (supersonic-browse--shuffled (get-text-property (point) 'supersonic-browse-ids)))
     (supersonic-browse--with-ids "Shuffling" (lambda (ids) (supersonic-playback-start (supersonic-browse--shuffled ids))))))
 
+(declare-function supersonic-download-tracks "supersonic-download")
 (declare-function supersonic-radio "supersonic-radio")
 
 (defun supersonic-browse-star ()
@@ -1678,6 +1679,22 @@ TYPE is one of `supersonic-provider-album-list-types'."
   "Add the item in focus to the play queue."
   (interactive)
   (supersonic-browse--with-ids "Queued" #'supersonic-playback-enqueue))
+
+(aio-defun
+ supersonic-browse--download-ids (ids)
+ "Download the tracks with IDS, looked up all at once."
+ (let ((promises (mapcar #'supersonic-provider-track ids))
+       tracks)
+   ;; `dolist', so that `aio-await' stays where generator.el transforms it.
+   (dolist (promise promises)
+     (push (aio-await promise) tracks))
+   (supersonic-download-tracks (nreverse tracks))))
+
+(defun supersonic-browse-download ()
+  "Save the item in focus for offline use, see `supersonic-download-tracks'."
+  (interactive)
+  (require 'supersonic-download)
+  (supersonic-browse--with-ids "Downloading" (lambda (ids) (ignore (supersonic-browse--download-ids ids)))))
 
 (defun supersonic-browse-open ()
   "Open the item in focus, or play from the track in focus on."
@@ -1885,6 +1902,7 @@ TYPE is one of `supersonic-provider-album-list-types'."
      ("shuffle" supersonic-browse-shuffle)
      ("add to the queue" supersonic-browse-enqueue)
      ("add to a playlist" supersonic-browse-add-to-playlist)
+     ("save for offline" supersonic-browse-download)
      ("radio: it, then more like it" supersonic-browse-radio)
      ("favourite (♥) or not" supersonic-browse-star))
     ("Pages" browser
@@ -2147,6 +2165,7 @@ The keys are read off the keymaps, so they are the ones bound."
     (define-key map (kbd "r") #'supersonic-browse-forward)
     (define-key map (kbd "h") #'supersonic-browse-home)
     (define-key map (kbd "A") #'supersonic-browse-add-to-playlist)
+    (define-key map (kbd "S") #'supersonic-browse-download)
     (define-key map (kbd "x") #'supersonic-browse-radio)
     (define-key map (kbd "*") #'supersonic-browse-star)
     (define-key map (kbd "d") #'supersonic-browse-playlist-remove)

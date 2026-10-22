@@ -9076,6 +9076,20 @@ item, kept apart even when they read the same."
     (should (string-search "1999" (supersonic-consult--annotate (nth 1 candidates))))
     (should (string-search "1:05" (supersonic-consult--annotate (nth 2 candidates))))))
 
+(ert-deftest supersonic-tests-download-file-names ()
+  "Songs are saved as Artist/Album (Year)/NN - Title, with what a file
+name cannot hold replaced, and their lyrics as LRC."
+  (require 'supersonic-download)
+  (let ((supersonic-download-directory "/music/"))
+    (should (equal "/music/AC_DC/Back in Black (1980)/01 - Hells Bells.flac"
+                   (supersonic-download--file '(:id "1" :title "Hells Bells" :artist "AC/DC" :album "Back in Black"
+                                                :year 1980 :track 1 :suffix "flac"))))
+    (should (equal "/music/Band/Live/2-03 - _.mp3"
+                   (supersonic-download--file '(:id "2" :title ".." :artist "Band" :album "Live" :track 3 :disc 2)))))
+  (should (equal "[01:02.50]Hello\nPlain"
+                 (supersonic-download--lrc '(:lines ((62500 . "Hello") (nil . "Plain"))))))
+  (should (equal "\"a\\\"b\\\\c\"\n" (supersonic-download--config-string "a\"b\\c"))))
+
 (ert-deftest supersonic-tests-browse-row-start-and-end ()
   "Line start and end go to the first and last item of the line, then of
 the section; the same for lines of one item, like tracks."

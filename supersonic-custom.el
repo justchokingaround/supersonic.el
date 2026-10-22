@@ -535,6 +535,16 @@ Needs `supersonic-lyrics-translate-function'."
   "Face of the synced lyrics lines already sung."
   :group 'supersonic-lyrics)
 
+;;;; Downloads
+
+(defcustom supersonic-download-directory "~/Music/Supersonic/"
+  "Directory `supersonic-browse-download' saves music to, for offline use.
+Songs go under Artist/Album (Year)/, as the server has them, with the
+album's cover and the lyrics next to them.  Add it to
+`supersonic-local-directories' to play them with the `local' provider."
+  :type 'directory
+  :group 'supersonic)
+
 ;;;; Local files
 
 (defgroup supersonic-local nil
