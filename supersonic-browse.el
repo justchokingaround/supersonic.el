@@ -1600,17 +1600,21 @@ scroll, which with a tall image in view is like being stuck."
        (supersonic-browse--region-first (supersonic-browse--prop (if (< j n) j 0) 'supersonic-browse-region))))))
 
 (defun supersonic-browse-previous-section ()
-  "Focus the first item of the previous region, from the first round to the last."
+  "Focus the first item of this section; there already, the previous one's.
+As `backward-paragraph' goes to the start of the paragraph first."
   (interactive)
   (let* ((n (supersonic-browse--stop-count))
          (i (supersonic-browse--current-index))
          (region (and (> n 0) (supersonic-browse--prop i 'supersonic-browse-region)))
+         (first (and region (supersonic-browse--region-first region)))
          (j i))
-    (while (and (>= j 0) (eql (supersonic-browse--prop j 'supersonic-browse-region) region))
-      (setq j (1- j)))
     (when (> n 0)
-      (supersonic-browse--goto-section
-       (supersonic-browse--region-first (supersonic-browse--prop (if (>= j 0) j (1- n)) 'supersonic-browse-region))))))
+      (if (and first (/= i first))
+          (supersonic-browse--goto-section first)
+        (while (and (>= j 0) (eql (supersonic-browse--prop j 'supersonic-browse-region) region))
+          (setq j (1- j)))
+        (supersonic-browse--goto-section
+         (supersonic-browse--region-first (supersonic-browse--prop (if (>= j 0) j (1- n)) 'supersonic-browse-region)))))))
 
 (defun supersonic-browse--goto-section (i)
   "Focus stop I, the first of a section, with the section's heading in view.

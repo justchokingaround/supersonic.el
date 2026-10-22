@@ -8960,7 +8960,12 @@ grids; TAB goes region by region, round from the last to the first."
     (supersonic-browse-next-section)    ; round to the first
     (should (equal '(b 1) (supersonic-tests--browse-at)))
     (supersonic-browse-previous-section)
-    (should (equal '(r 1) (supersonic-tests--browse-at)))))
+    (should (equal '(r 1) (supersonic-tests--browse-at)))
+    (supersonic-browse-next)            ; within a section, back to its start first
+    (supersonic-browse-previous-section)
+    (should (equal '(r 1) (supersonic-tests--browse-at)))
+    (supersonic-browse-previous-section)
+    (should (equal '(t 1) (supersonic-tests--browse-at)))))
 
 (ert-deftest supersonic-tests-browse-numbering ()
   "Track numbers are shown when sound, positions otherwise."
