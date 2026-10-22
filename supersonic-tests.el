@@ -9252,6 +9252,20 @@ random ones, leaving out what is queued already."
             (should-not (plist-get (aio-wait-for (supersonic-local--starred)) :tracks))))
       (delete-directory supersonic-cache-path t))))
 
+(ert-deftest supersonic-tests-requests-are-silent ()
+  "Background requests, scrobbles included, ask url-retrieve to be silent
+and show no messages, so \"Contacting host\" never flashes up."
+  (let ((calls nil))
+    (cl-letf (((symbol-function 'url-retrieve)
+               (lambda (_url _callback &optional _cbargs silent &rest _)
+                 (push (list silent inhibit-message) calls)
+                 (generate-new-buffer " *test*")))
+              ((symbol-function 'supersonic-build-url) (lambda (&rest _) "http://host/rest/x"))
+              ((symbol-function 'run-at-time) (lambda (&rest _) nil)))
+      (supersonic-url-retrieve "http://host/rest/x")
+      (supersonic-subsonic--scrobble "t1" t))
+    (should (equal '((t t) (t t)) calls))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here

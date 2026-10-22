@@ -117,7 +117,8 @@ longer waited for still holds a file descriptor open (#70)."
                               (when timer
                                 (cancel-timer timer))
                               (let ((value (cons status (current-buffer))))
-                                (aio-resolve promise (lambda () value))))))
+                                (aio-resolve promise (lambda () value))))
+                            nil t))
             (error (aio-resolve promise (lambda () (signal (car err) (cdr err))))
                    nil))))
     ;; `url-retrieve' calls back before returning for some URLs (and

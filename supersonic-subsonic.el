@@ -259,8 +259,11 @@ leaves the choice to the server."
         `(("maxBitRate" . ,(number-to-string (plist-get format :max-bit-rate))))))))
 
 (defun supersonic-subsonic--scrobble (id now-playing)
-  "Scrobble track ID via scrobble.view, as now playing if NOW-PLAYING."
-  (url-retrieve
+  "Scrobble track ID via scrobble.view, as now playing if NOW-PLAYING.
+Silently: it happens at every track change, and url-http would say
+\"Contacting host\" each time."
+  (let ((inhibit-message t))
+    (url-retrieve
    (supersonic-build-url
     "/scrobble.view"
     `(("id" . ,id)
@@ -268,9 +271,10 @@ leaves the choice to the server."
        ,(if now-playing
             "false"
           "true"))))
-   ;; Kill the unread response buffer, which would otherwise stay.  The
-   ;; connection is back in its pool by now (`url-http-activate-callback').
-   (lambda (_status) (kill-buffer (current-buffer)))))
+     ;; Kill the unread response buffer, which would otherwise stay.  The
+     ;; connection is back in its pool by now (`url-http-activate-callback').
+     (lambda (_status) (kill-buffer (current-buffer)))
+     nil t)))
 
 (defun supersonic-subsonic--cover-art-request-url (art size)
   "Return the getCoverArt URL for cover art ART, scaled to SIZE."
