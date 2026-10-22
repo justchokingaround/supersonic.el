@@ -2052,7 +2052,8 @@ Asks first."
      ("back / forward" supersonic-browse-back supersonic-browse-forward)
      ("home" supersonic-browse-home)
      ("search" supersonic-browse-search)
-     ("reload" supersonic-browse-reload))
+     ("reload" supersonic-browse-reload)
+     ("close" quit-window))
     ("The queue" queue
      ("play this one" supersonic-browse-open)
      ("remove it" supersonic-browse-playlist-remove)
@@ -2314,6 +2315,7 @@ The keys are read off the keymaps, so they are the ones bound."
     (define-key map (kbd "h") #'supersonic-browse-home)
     (define-key map (kbd "A") #'supersonic-browse-add-to-playlist)
     (define-key map (kbd "S") #'supersonic-browse-download)
+    (define-key map (kbd "q") #'quit-window)
     (define-key map (kbd "x") #'supersonic-browse-radio)
     (define-key map (kbd "*") #'supersonic-browse-star)
     (define-key map (kbd "d") #'supersonic-browse-playlist-remove)
