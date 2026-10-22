@@ -2117,6 +2117,8 @@ Asks first."
      ("go to the album" supersonic-player-goto-album)
      ("radio from this song" supersonic-radio)
      ("favourite (♥) or not" supersonic-player-star)
+     ("all the lyrics" supersonic-lyrics)
+     ("the queue" supersonic-browse-queue)
      ("back to the library" supersonic-player-library)
      ("reload" supersonic-player-refresh))
     ("From anywhere" prefix

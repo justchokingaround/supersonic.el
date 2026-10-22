@@ -54,6 +54,8 @@
 (defvar supersonic-lyrics--lyrics)
 (defvar supersonic-lyrics--index)
 (declare-function supersonic-lyrics--translation-text "supersonic-lyrics")
+(declare-function supersonic-lyrics "supersonic-lyrics")
+(declare-function supersonic-browse-queue "supersonic-browse")
 (declare-function supersonic-lyrics--line-text "supersonic-lyrics")
 
 (defvar supersonic-player-mode-map)
@@ -417,6 +419,7 @@ seen at once; what plays next may be scrolled to."
      ((supersonic-prev-track supersonic-skip-track) . "prev/next")
      ((supersonic-seek-back supersonic-seek-forward) . "seek")
      (supersonic-player-goto-artist . "artist") (supersonic-player-goto-album . "album")
+     (supersonic-lyrics . "lyrics") (supersonic-browse-queue . "up next")
      (supersonic-player-library . "library") (supersonic-cheatsheet . "all keys"))
    supersonic-player-mode-map width))
 
@@ -775,6 +778,8 @@ be seen from its top."
     (define-key map (kbd "l") #'supersonic-player-library)
     (define-key map (kbd "P") #'supersonic-toggle-playing)
     (define-key map (kbd "g") #'supersonic-player-refresh)
+    (define-key map (kbd "L") #'supersonic-lyrics)
+    (define-key map (kbd "u") #'supersonic-browse-queue)
     map)
   "Keymap for `supersonic-player-mode'; its parent is the browser's.")
 
