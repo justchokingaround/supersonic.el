@@ -156,12 +156,49 @@ the accent colour itself; the big play/pause gets a halo instead."
   (let* ((text (supersonic-browse--fit text (supersonic-browse--available-width))))
     (insert (supersonic-player--center (supersonic--string-pixel-width text)) text "\n")))
 
+(defvar supersonic-player--fitting nil
+  "Non-nil while a layout is redone to fit, so it is redone once only.")
+
+(defvar-local supersonic-player--art-fit nil
+  "(WIDTH HEIGHT . SIZE): the cover size found to fit a window that big.")
+
 (defun supersonic-player--art-size ()
-  "Return how big the cover is drawn, for the window showing the page."
-  (let ((window (supersonic-browse--window)))
-    (max 160 (min supersonic-player-art-size
-                  (round (* 0.62 (supersonic-browse--available-width)))
-                  (round (* 0.42 (window-body-height window t)))))))
+  "Return how big the cover is drawn, for the window showing the page.
+At most `supersonic-player-art-size' and most of the width; and, once a
+layout has been measured for a window of this size, no bigger than
+leaves the lyrics in view (see `supersonic-player--fit-art')."
+  (let* ((window (supersonic-browse--window))
+         (width (window-body-width window t))
+         (height (window-body-height window t))
+         (size (max 160 (min supersonic-player-art-size
+                             (round (* 0.62 (supersonic-browse--available-width)))
+                             (round (* 0.5 height))))))
+    (if (and supersonic-player--art-fit
+             (eql (nth 0 supersonic-player--art-fit) width)
+             (eql (nth 1 supersonic-player--art-fit) height))
+        (min size (nthcdr 2 supersonic-player--art-fit))
+      size)))
+
+(defun supersonic-player--fit-art (window)
+  "Shrink the cover if the page's lyrics end below WINDOW, and lay it out again.
+Returns non-nil if it did.  Everything down to the lyrics is meant to be
+seen at once; what plays next may be scrolled to."
+  (let ((end (or (text-property-not-all
+                  (or (text-property-any (point-min) (point-max) 'supersonic-player-lyrics t) (point-max))
+                  (point-max) 'supersonic-player-lyrics t)
+                 (point-max)))
+        (height (window-body-height window t))
+        (art (text-property-any (point-min) (point-max) 'supersonic-player-art t)))
+    (when art
+      (let* ((used (cdr (window-text-pixel-size window (point-min) end)))
+             (over (- used height))
+             (size (car (image-size (get-text-property art 'display) t))))
+        (when (and (> over 0) size (> size 160))
+          (setq supersonic-player--art-fit
+                (append (list (window-body-width window t) height)
+                        ;; The card pads the art by 56 pixels in all.
+                        (max 160 (- (round size) 56 over 12))))
+          t)))))
 
 (defun supersonic-player--art (track size)
   "Insert TRACK's cover at SIZE, on a card with a soft shadow."
@@ -474,9 +511,15 @@ the accent colour itself; the big play/pause gets a halo instead."
             (set-window-start window (min start (point-max)) t)
           (set-window-start window (point-min) t))))
     (setq supersonic-player--shown-track (plist-get state :track-id))
-    (supersonic-browse--update-focus)
-    (supersonic-player--fetch-art)
-    (supersonic-player--update-timer)))
+    (let ((window (get-buffer-window (current-buffer) t)))
+      (if (and window track graphic (not supersonic-player--fitting)
+               (let ((supersonic-player--fitting t)) (supersonic-player--fit-art window)))
+          ;; Once more, with the cover sized to fit.
+          (let ((supersonic-player--fitting t))
+            (supersonic-player--render-here))
+        (supersonic-browse--update-focus)
+        (supersonic-player--fetch-art)
+        (supersonic-player--update-timer)))))
 
 (defun supersonic-player--fetch-art ()
   "Fetch the cover and the thumbnails the page lacks, then draw them."
