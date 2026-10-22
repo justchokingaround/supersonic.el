@@ -368,6 +368,8 @@ TRACK is its track plist.  Answers from the cache unless REFRESH."
 ;;;
 
 (defvar supersonic-lyrics-follow-mode)
+(declare-function supersonic-browse-hint-line "supersonic-browse")
+(defvar supersonic-lyrics-mode-map)
 
 (defvar supersonic-lyrics-line nil
   "The line of the current track's synced lyrics being sung, or nil.")
@@ -826,6 +828,13 @@ stretch of the same properties."
                                                   (if supersonic-lyrics-show-translation "" " (hidden)")))
                                          (t "")))
                            'face '(shadow (:height 0.85))))))
+    (when (and track (require 'supersonic-browse nil t))
+      (insert (supersonic-lyrics--centered
+               (supersonic-browse-hint-line
+                '((supersonic-lyrics-seek-to-line . "play from here") (supersonic-lyrics-toggle-follow . "follow")
+                  ((supersonic-lyrics-later supersonic-lyrics-earlier) . "sync")
+                  (supersonic-lyrics-toggle-translation . "translation") (quit-window . "close"))
+                supersonic-lyrics-mode-map (window-body-width nil t)))))
     (insert "\n")
     (pcase supersonic-lyrics--status
       ('nil (insert (supersonic-lyrics--centered (propertize "Nothing playing." 'face 'shadow))))
