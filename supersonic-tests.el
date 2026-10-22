@@ -9199,6 +9199,25 @@ track row's duration."
                              (sort (overlays-in (point-min) (point-max))
                                    (lambda (a b) (< (overlay-start a) (overlay-start b))))))))))
 
+(ert-deftest supersonic-tests-browse-visiting-the-same-page-again ()
+  "Visiting the page shown brings it up to date instead of stacking it
+on the way back, wherever focus is; another page is stacked."
+  (require 'supersonic-browse)
+  (let ((refreshed 0))
+    (cl-letf (((symbol-function 'supersonic-browse--load) (lambda (_) nil))
+              ((symbol-function 'supersonic-browse--refresh) (lambda (&rest _) (cl-incf refreshed)))
+              ((symbol-function 'pop-to-buffer-same-window) #'ignore))
+      (unwind-protect
+          (with-current-buffer (supersonic-browse--buffer)
+            (setq supersonic-browse--page nil supersonic-browse--back nil)
+            (supersonic-browse-visit '(:kind queue))
+            (supersonic-browse-visit '(:kind queue :selected (track "a" 1)))
+            (should (= 1 refreshed))
+            (should-not supersonic-browse--back)
+            (supersonic-browse-visit '(:kind album :id "x"))
+            (should (= 1 (length supersonic-browse--back))))
+        (kill-buffer supersonic-browse-buffer-name)))))
+
 (ert-deftest supersonic-tests-provider-album-list-passes-an-offset ()
   "An offset reaches the provider only when one is asked for."
   (let (calls)

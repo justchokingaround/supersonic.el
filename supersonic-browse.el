@@ -1113,7 +1113,8 @@ window's frame draws it, and loads finish in process callbacks."
         (insert (supersonic-browse--space supersonic-browse-margin)
                 (propertize "Loading…" 'face 'supersonic-browse-hint) "\n")
       (supersonic-browse--render-page supersonic-browse--content))
-    (insert "\n")
+    ;; Room below the last row, so it can be scrolled into view whole.
+    (insert (propertize "\n\n" 'line-height 1.6))
     (supersonic-browse--index-stops)
     (when supersonic-browse--restore-row
       (let ((row supersonic-browse--restore-row))
@@ -1277,8 +1278,23 @@ Moving up to the first items otherwise leaves the title cut off."
   (when (and i (>= i 0) (< i (supersonic-browse--stop-count)))
     (goto-char (aref supersonic-browse--stops i))
     (supersonic-browse--update-focus)
+    (supersonic-browse--reveal-bottom (get-buffer-window (current-buffer)))
     (supersonic-browse--reveal-top (get-buffer-window (current-buffer)))
     t))
+
+(defun supersonic-browse--reveal-bottom (window)
+  "Scroll WINDOW up if the item at point is not seen whole.
+A tile's title and the line under it are below its picture, which
+keeping point in view alone leaves cut off at the window's bottom."
+  (when window
+    (let ((end (save-excursion
+                 (forward-line (if (get-text-property (point) 'supersonic-browse-tile) 3 1))
+                 (point))))
+      (unless (pos-visible-in-window-p (max (point-min) (1- end)) window)
+        (with-selected-window window
+          (save-excursion
+            (goto-char (max (point-min) (1- end)))
+            (recenter -1)))))))
 
 (defun supersonic-browse--blend (a b amount)
   "Return colour A mixed into colour B by AMOUNT, 0 to 1."
@@ -1684,17 +1700,25 @@ heading is out of view, scrolls so the heading is at the top."
     buff))
 
 (defun supersonic-browse-visit (page)
-  "Show PAGE in the browser, remembering the page left for going back."
+  "Show PAGE in the browser, remembering the page left for going back.
+The page shown already is only brought up to date, not stacked again."
   (let ((buff (supersonic-browse--buffer)))
     (pop-to-buffer-same-window buff)
     (with-current-buffer buff
-      (when supersonic-browse--page
-        (push (plist-put (copy-sequence supersonic-browse--page) :selected supersonic-browse--selected)
-              supersonic-browse--back))
-      (setq supersonic-browse--forward nil
-            supersonic-browse--page page
-            supersonic-browse--selected nil)
-      (ignore (supersonic-browse--load buff)))))
+      (if (supersonic-browse--same-page-p page supersonic-browse--page)
+          (supersonic-browse--refresh buff)
+        (when supersonic-browse--page
+          (push (plist-put (copy-sequence supersonic-browse--page) :selected supersonic-browse--selected)
+                supersonic-browse--back))
+        (setq supersonic-browse--forward nil
+              supersonic-browse--page page
+              supersonic-browse--selected nil)
+        (ignore (supersonic-browse--load buff))))))
+
+(defun supersonic-browse--same-page-p (a b)
+  "Return non-nil if pages A and B are the same page, wherever focus is."
+  (and a b (cl-every (lambda (key) (equal (plist-get a key) (plist-get b key)))
+                     '(:kind :id :type :query))))
 
 (defun supersonic-browse--show (page)
   "Show PAGE, kept from before, focus on what had it then."
