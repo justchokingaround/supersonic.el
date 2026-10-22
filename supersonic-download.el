@@ -58,7 +58,8 @@
 (defun supersonic-download--album-directory (track)
   "Return the directory TRACK's album is saved to."
   (expand-file-name
-   (concat (supersonic-download--part (or (plist-get track :artist) "Unknown artist")) "/"
+   ;; The album's artist, so that songs with guests stay together.
+   (concat (supersonic-download--part (or (plist-get track :album-artist) (plist-get track :artist) "Unknown artist")) "/"
            (supersonic-download--part (concat (or (plist-get track :album) "Unknown album")
                                               (and (plist-get track :year) (format " (%s)" (plist-get track :year)))))
            "/")
@@ -116,26 +117,27 @@ The file appears only once it is complete."
 
 (aio-defun
  supersonic-download--track (track)
- "Download TRACK, its album's cover and its lyrics, unless already there.
-Resolves to non-nil if the song was fetched now."
- (let ((file (supersonic-download--file track)))
-   (unless (file-exists-p file)
+ "Download TRACK, its album's cover and its lyrics, each unless already there.
+Resolves to non-nil if the song itself was fetched now."
+ (let* ((file (supersonic-download--file track))
+        (cover (expand-file-name "cover.jpg" (file-name-directory file)))
+        (lrc (concat (file-name-sans-extension file) ".lrc"))
+        (fetched (not (file-exists-p file))))
+   (when fetched
      (unless (aio-await (supersonic-download--fetch
                          (aio-await (supersonic-provider-stream-url (plist-get track :id) '(:format "raw")))
                          file))
-       (error "Could not download %s" (or (plist-get track :title) (plist-get track :id))))
-     (let ((cover (expand-file-name "cover.jpg" (file-name-directory file))))
-       (when (and (plist-get track :art) (not (file-exists-p cover)))
-         (aio-await (supersonic-download--fetch
-                     (aio-await (supersonic-provider-cover-art-url (plist-get track :art) nil))
-                     cover))))
-     (when (require 'supersonic-lyrics nil t)
-       (let ((outcome (aio-await (aio-catch (supersonic-lyrics-lookup (plist-get track :id) track)))))
-         (when (and (eq (car outcome) :success) (plist-get (cdr outcome) :lines))
-           (let ((coding-system-for-write 'utf-8))
-             (write-region (supersonic-download--lrc (cdr outcome)) nil
-                           (concat (file-name-sans-extension file) ".lrc") nil 'silent)))))
-     t)))
+       (error "Could not download %s" (or (plist-get track :title) (plist-get track :id)))))
+   (when (and (plist-get track :art) (not (file-exists-p cover)))
+     (aio-await (supersonic-download--fetch
+                 (aio-await (supersonic-provider-cover-art-url (plist-get track :art) nil))
+                 cover)))
+   (when (and (not (file-exists-p lrc)) (require 'supersonic-lyrics nil t))
+     (let ((outcome (aio-await (aio-catch (supersonic-lyrics-lookup (plist-get track :id) track)))))
+       (when (and (eq (car outcome) :success) (plist-get (cdr outcome) :lines))
+         (let ((coding-system-for-write 'utf-8))
+           (write-region (supersonic-download--lrc (cdr outcome)) nil lrc nil 'silent)))))
+   fetched))
 
 (aio-defun
  supersonic-download--run ()

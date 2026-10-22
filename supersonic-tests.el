@@ -9084,6 +9084,9 @@ name cannot hold replaced, and their lyrics as LRC."
     (should (equal "/music/AC_DC/Back in Black (1980)/01 - Hells Bells.flac"
                    (supersonic-download--file '(:id "1" :title "Hells Bells" :artist "AC/DC" :album "Back in Black"
                                                 :year 1980 :track 1 :suffix "flac"))))
+    (should (equal "/music/Band/Live (2001)/01 - Duet.mp3"
+                   (supersonic-download--file '(:id "3" :title "Duet" :artist "Band feat. Guest" :album-artist "Band"
+                                                :album "Live" :year 2001 :track 1))))
     (should (equal "/music/Band/Live/2-03 - _.mp3"
                    (supersonic-download--file '(:id "2" :title ".." :artist "Band" :album "Live" :track 3 :disc 2)))))
   (should (equal "[01:02.50]Hello\nPlain"

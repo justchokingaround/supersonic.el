@@ -83,6 +83,7 @@ as `:genre', for a now-playing row of the user's own to read."
    data
    '((:title . "title")
      (:artist . "artist")
+     (:album-artist . "displayAlbumArtist")
      (:album . "album")
      (:duration . "duration")
      (:track . "track")
@@ -278,8 +279,9 @@ Silently: it happens at every track change, and url-http would say
      nil t)))
 
 (defun supersonic-subsonic--cover-art-request-url (art size)
-  "Return the getCoverArt URL for cover art ART, scaled to SIZE."
-  (supersonic-build-url "/getCoverArt.view" `(("id" . ,art) ("size" . ,(int-to-string size)))))
+  "Return the getCoverArt URL for cover art ART, scaled to SIZE.
+A nil SIZE asks for the image as it is."
+  (supersonic-build-url "/getCoverArt.view" `(("id" . ,art) ,@(and size `(("size" . ,(int-to-string size)))))))
 
 (defun supersonic-subsonic--image-size (data)
   "Return (WIDTH . HEIGHT) of the JPEG, PNG or WebP image in DATA, or nil.
