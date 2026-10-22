@@ -522,7 +522,10 @@ An album over several discs gets a heading per disc."
                                      (and show-album (plist-get track :album))))
                      " · "))
             (title (concat (propertize (or (plist-get track :title) "?")
-                                       'face (if playing 'supersonic-browse-playing 'supersonic-browse-track))
+                                       'face (cond (playing 'supersonic-browse-playing)
+                                                   ;; Queue entries already played.
+                                                   ((plist-get track :queue-played) 'shadow)
+                                                   (t 'supersonic-browse-track)))
                            (and (plist-get track :starred) (propertize "  ♥" 'face 'supersonic-browse-accent))))
             (detail (and (not (string-empty-p detail)) (propertize (concat "   " detail) 'face 'shadow)))
             (shown (supersonic-browse--fit (concat title detail) (- duration-x title-x (* 2 char))))
@@ -972,6 +975,11 @@ others in order while they fit."
               (current (seq-position tracks t (lambda (track _) (plist-get track :queue-current))))
               (left (and current (apply #'+ (mapcar (lambda (track) (or (plist-get track :duration) 0))
                                                     (nthcdr current tracks))))))
+         ;; Opened, the page shows the song playing, past those played.
+         (when (and current (not supersonic-browse--selected) (not supersonic-browse--restore-row))
+           (setq supersonic-browse--restore-row current))
+         (cl-loop for track in tracks for i below (or current 0)
+                  do (plist-put track :queue-played t))
          (supersonic-browse--title "Queue"
                                    (string-join (delq nil (list (supersonic-browse--plural (length tracks) "song")
                                                                 (and left (concat (supersonic-browse--total left) " left"))))
