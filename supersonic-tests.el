@@ -9154,6 +9154,76 @@ trashed, with tracks no longer found left out."
               (should-not (aio-wait-for (supersonic-local--playlists))))))
       (delete-directory dir t))))
 
+(defmacro supersonic-tests--with-player-page (state &rest body)
+  "Run BODY in a now-playing page laid out for STATE, without a display.
+Art, the progress timer and lyrics are left out; the page's hooks are
+kept from leaking into other tests."
+  (declare (indent 1))
+  `(let ((supersonic-playback-track-change-hook nil)
+         (supersonic-playback-state-change-hook nil)
+         (supersonic-playback-queue-change-hook nil)
+         (supersonic-playback-position-change-hook nil)
+         (supersonic-lyrics-line-change-hook nil))
+     (require 'supersonic-player)
+     (with-temp-buffer
+       (supersonic-player-mode)
+       (setq supersonic-player--state ,state)
+       ;; A batch session's window is too narrow for anything to fit.
+       (cl-letf (((symbol-function 'supersonic-browse--available-width) (lambda () 800))
+                 ((symbol-function 'supersonic-player--fetch-art) #'ignore)
+                 ((symbol-function 'supersonic-player--update-timer) #'ignore)
+                 ((symbol-function 'supersonic-player--lyrics-lines) (lambda () '("sung" "gesungen" "next"))))
+         (supersonic-player--render-here)
+         ,@body))))
+
+(defun supersonic-tests--player-keys ()
+  "Return the item keys of the page's stops, in order."
+  (mapcar (lambda (pos) (get-text-property pos 'supersonic-browse-key)) supersonic-browse--stops))
+
+(ert-deftest supersonic-tests-player-page-lays-out-a-track ()
+  "The page shows the track, links to its artist and album, the controls
+in their order, the lyrics and what plays next, with play/pause in focus."
+  (supersonic-tests--with-player-page
+      '(:track-id "t1" :track (:id "t1" :title "Song" :artist "Band" :album "Record" :duration 200)
+        :paused t :upcoming ((3 . (:id "t2" :title "Later" :artist "Band" :duration 61))))
+    (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+      (dolist (expected '("Paused" "Song" "Band" "Record" "sung" "gesungen" "next" "Up next" "Later" "1:01"))
+        (should (string-search expected text))))
+    (should (equal '((button artist) (button album)
+                     (button like) (button shuffle) (button prev) (button toggle)
+                     (button next) (button repeat) (button radio))
+                   (seq-take (supersonic-tests--player-keys) 9)))
+    (should (member '(button (upcoming 3)) (supersonic-tests--player-keys)))
+    (should (equal '(button toggle) (get-text-property (point) 'supersonic-browse-key)))
+    (should (get-text-property (text-property-any (point-min) (point-max) 'supersonic-player-lyrics t)
+                               'supersonic-player-lyrics))))
+
+(ert-deftest supersonic-tests-player-page-with-nothing-playing ()
+  "Without a track the page offers a surprise and the library instead."
+  (supersonic-tests--with-player-page nil
+    (should (string-search "Nothing playing" (buffer-string)))
+    (should (equal '((button supersonic-browse-surprise) (button supersonic-browse))
+                   (supersonic-tests--player-keys)))))
+
+(ert-deftest supersonic-tests-player-controls-run-commands ()
+  "Every control runs a command, so RET on it can call it interactively."
+  (require 'supersonic-player)
+  (require 'supersonic-radio)
+  (dolist (name '(like shuffle prev toggle next repeat radio minus plus))
+    (should (commandp (supersonic-player--control-action name)))))
+
+(ert-deftest supersonic-tests-player-seek-click-fraction ()
+  "A click on the progress bar seeks to its fraction of the bar, leaving
+out the padding at either end and clamping clicks on the padding."
+  (require 'supersonic-player)
+  (let (fractions)
+    (cl-letf (((symbol-function 'supersonic-playback-seek-fraction) (lambda (f) (push f fractions))))
+      (dolist (x '(110 10 0 220))
+        ;; A click X pixels into an image 220 wide.
+        (supersonic-player-seek-click
+         `(mouse-1 (nil 1 (0 . 0) 0 nil 1 (0 . 0) nil (,x . 0) (220 . 20))))))
+    (should (equal '(0.5 0.0 0.0 1.0) (nreverse fractions)))))
+
 (ert-deftest supersonic-tests-player-lyrics-redraw-in-place ()
   "New lyrics replace the old ones where they are, wherever point is."
   (require 'supersonic-player)
