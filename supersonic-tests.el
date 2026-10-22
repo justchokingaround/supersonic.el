@@ -9100,10 +9100,15 @@ leaving out a leading article."
       '(((artist "1") 1 1 0 0) ((artist "2") 1 1 0 1 same-line) ((artist "3") 1 1 0 2 same-line))
     (dotimes (i 3)
       (let ((inhibit-read-only t)) (put-text-property (aref supersonic-browse--stops i) (1+ (aref supersonic-browse--stops i))
-                         'supersonic-browse-item (list :name (nth i '("ABBA" "The Beatles" "Björk"))))))
+                         'supersonic-browse-item (list :name (nth i '("ABBA" "The Beatles" "Dido"))))))
     (supersonic-browse-jump ?b)
     (should (equal '(artist "2") (supersonic-tests--browse-at)))
-    (should-error (supersonic-browse-jump ?z) :type 'user-error)))
+    (should-error (supersonic-browse-jump ?z) :type 'user-error)
+    ;; The artists page is sorted: no C, so on to the next there is.
+    (setq supersonic-browse--page '(:kind artists))
+    (supersonic-browse-jump ?a)
+    (supersonic-browse-jump ?c)
+    (should (equal '(artist "3") (supersonic-tests--browse-at)))))
 
 (ert-deftest supersonic-tests-browse-album-list-loads-more ()
   "Focus near the end of an album list loads the albums after it, adds
