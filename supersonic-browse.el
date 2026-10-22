@@ -97,6 +97,8 @@
 (defvar-local supersonic-browse--restore-row nil
   "Position of the track row to focus once the page is laid out again.")
 (defvar supersonic-browse-mode-map)
+(defvar isearch-mode-end-hook-quit)
+(defvar isearch-mode-end-hook-quit)
 
 ;;;
 ;;; Colours and measures
@@ -568,7 +570,7 @@ SPEC is one of `supersonic-browse--hero-buttons'."
                                             (font-family . ,(supersonic-browse--font-family)) (font-size . 17)
                                             (font-weight . "bold") (fill . ,ink))
                                     label))
-    (svg-image svg :ascent 100 :scale 1)))
+    (svg-image svg :ascent 'center :scale 1)))
 
 (defun supersonic-browse--hero (item shape kicker title subtitle meta)
   "Insert the header of a page about ITEM, its art drawn as SHAPE.
@@ -619,7 +621,10 @@ of its own, so they take focus like any other."
             (text subtitle-y subtitle 22 (supersonic-browse--accent)))
           (when meta
             (text meta-y meta 17 (supersonic-browse--subtle))))
-        (let ((image (apply #'svg-image svg :ascent 100 :scale 1 (and file (list :base-uri file))))
+        ;; Centred on their lines, the two slices fill them exactly;
+        ;; sitting on the baseline, each line would add the font's
+        ;; descent below its slice, a seam across the art.
+        (let ((image (apply #'svg-image svg :ascent 'center :scale 1 (and file (list :base-uri file))))
               (properties (list 'supersonic-browse-item item 'supersonic-browse-hero t)))
           ;; The header is one image cut in two: the top beside the
           ;; text, and the foot of the art, which the buttons follow.
@@ -729,8 +734,12 @@ of its own, so they take focus like any other."
                                        map))))
        (unless (zerop steps)
          (insert (propertize "  ›  " 'face 'supersonic-browse-trail)))))
-    (let ((hints (propertize (supersonic-browse--hints) 'face 'supersonic-browse-hint)))
-      (when (> (- (supersonic-browse--available-width) (supersonic--string-pixel-width hints)) 300)
+    (let ((hints (propertize (supersonic-browse--hints) 'face 'supersonic-browse-hint))
+          (trail (supersonic--string-pixel-width (buffer-substring (line-beginning-position) (point)))))
+      ;; Only with room to spare: space aligned to the left of where the
+      ;; trail ends has no width, and the two would run into each other.
+      (when (<= (+ trail 48 (supersonic--string-pixel-width hints))
+                (+ supersonic-browse-margin (supersonic-browse--available-width)))
         (insert (supersonic-browse--align (- (+ supersonic-browse-margin (supersonic-browse--available-width))
                                              (supersonic--string-pixel-width hints)))
                 hints)))
@@ -1209,6 +1218,14 @@ scroll, which with a tall image in view is like being stuck."
       (when (and pos (pos-visible-in-window-p pos))
         (goto-char pos))))
   (supersonic-browse--update-focus))
+
+(defun supersonic-browse--isearch-done ()
+  "Focus the item a search ended on, scrolling to it if need be."
+  (unless isearch-mode-end-hook-quit
+    (let ((i (supersonic-browse--key-index (get-text-property (point) 'supersonic-browse-key))))
+      (when i
+        (goto-char (aref supersonic-browse--stops i))
+        (supersonic-browse--update-focus)))))
 
 (defun supersonic-browse--scroll-command-p (command)
   "Return non-nil if COMMAND scrolls rather than moves."
@@ -2138,6 +2155,7 @@ The keys are read off the keymaps, so they are the ones bound."
   (when (bound-and-true-p hl-line-mode)
     (hl-line-mode -1))
   (add-hook 'post-command-hook #'supersonic-browse--post-command nil t)
+  (add-hook 'isearch-mode-end-hook #'supersonic-browse--isearch-done nil t)
   (add-hook 'window-size-change-functions #'supersonic-browse--window-changed nil t)
   (add-hook 'supersonic-playback-track-change-hook #'supersonic-browse--track-changed)
   (setq supersonic-browse--playing nil)
