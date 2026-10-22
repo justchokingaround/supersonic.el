@@ -96,6 +96,7 @@ Drawn on a 24 unit grid, scaled."
         ('repeat (path "M4 11 V9 A3 3 0 0 1 7 6 H20 M17 3 L20 6 L17 9 M20 13 V15 A3 3 0 0 1 17 18 H4 M7 21 L4 18 L7 15"))
         ('heart (path "M12 20 C12 20 3.5 14.5 3.5 8.8 A4.3 4.3 0 0 1 12 6.6 A4.3 4.3 0 0 1 20.5 8.8 C20.5 14.5 12 20 12 20 Z"))
         ('heart-full (path "M12 20 C12 20 3.5 14.5 3.5 8.8 A4.3 4.3 0 0 1 12 6.6 A4.3 4.3 0 0 1 20.5 8.8 C20.5 14.5 12 20 12 20 Z" t))
+        ('radio (path "M12 12 m-1.6 0 a1.6 1.6 0 1 0 3.2 0 a1.6 1.6 0 1 0 -3.2 0 M8.2 15.8 a5.4 5.4 0 0 1 0 -7.6 M15.8 8.2 a5.4 5.4 0 0 1 0 7.6 M5.3 18.7 a9.5 9.5 0 0 1 0 -13.4 M18.7 5.3 a9.5 9.5 0 0 1 0 13.4"))
         ('minus (path "M5 12 H19"))
         ('plus (path "M5 12 H19 M12 5 V19"))))
     group))
@@ -260,19 +261,25 @@ the accent colour itself; the big play/pause gets a halo instead."
     ('repeat #'supersonic-player-repeat)
     ('minus #'supersonic-player-volume-down)
     ('plus #'supersonic-player-volume-up)
-    ('like #'supersonic-player-star)))
+    ('like #'supersonic-player-star)
+    ('radio #'supersonic-radio)))
+
+(defconst supersonic-player--volume-width 160 "Width of the volume bar, in pixels.")
 
 (defun supersonic-player--volume-image ()
   "Return the display spec of the volume level."
   (let* ((volume (or (plist-get supersonic-player--state :volume) 0))
-         (width 150)
-         (svg (svg-create (+ width 56) 56)))
-    (dom-append-child svg (dom-node 'rect `((x . 0) (y . 26) (width . ,width) (height . 4) (rx . 2)
+         (width supersonic-player--volume-width)
+         (svg (svg-create width 56)))
+    ;; The level's label under the bar, not beside it, so the row is
+    ;; symmetric about its middle.
+    (dom-append-child svg (dom-node 'rect `((x . 0) (y . 24) (width . ,width) (height . 4) (rx . 2)
                                             (fill . ,(supersonic-browse--fg)) (fill-opacity . "0.16"))))
-    (dom-append-child svg (dom-node 'rect `((x . 0) (y . 26) (width . ,(* width (/ (min 100 volume) 100.0))) (height . 4)
+    (dom-append-child svg (dom-node 'rect `((x . 0) (y . 24) (width . ,(* width (/ (min 100 volume) 100.0))) (height . 4)
                                             (rx . 2) (fill . ,(supersonic-browse--subtle)))))
-    (dom-append-child svg (dom-node 'text `((x . ,(+ width 10)) (y . 33) (font-family . ,(supersonic-browse--font-family))
-                                            (font-size . 13) (fill . ,(supersonic-browse--subtle)))
+    (dom-append-child svg (dom-node 'text `((x . ,(/ width 2)) (y . 46) (text-anchor . "middle")
+                                            (font-family . ,(supersonic-browse--font-family))
+                                            (font-size . 12) (fill . ,(supersonic-browse--subtle)))
                                     (format "%d%%" (round volume))))
     (svg-image svg :ascent 'center :scale 1)))
 
@@ -280,7 +287,7 @@ the accent colour itself; the big play/pause gets a halo instead."
   "Insert the volume controls, centred."
   (let ((gap 10))
     (supersonic-browse--new-region)
-    (insert (supersonic-player--center (+ 56 gap 206 gap 56)))
+    (insert (supersonic-player--center (+ 56 gap supersonic-player--volume-width gap 56)))
     (dolist (part '(minus level plus))
       (if (eq part 'level)
           (insert (supersonic-browse--space gap)
@@ -356,7 +363,7 @@ the accent colour itself; the big play/pause gets a halo instead."
                          (supersonic-browse--item-properties
                           (list 'button (list 'upcoming index)) (append (list :action (lambda () (supersonic-playback-play-index index)))
                                                                         track)
-                          'supersonic-browse-row t 'supersonic-browse-region supersonic-browse--region
+                          'supersonic-browse-list-row t 'supersonic-browse-region supersonic-browse--region
                           'supersonic-player-thumb (cons track thumb))))
           (save-excursion
             (forward-line -1)
@@ -449,7 +456,8 @@ the accent colour itself; the big play/pause gets a halo instead."
       (when graphic
         (supersonic-player--insert-progress))
       (insert (propertize "\n" 'line-height 0.4))
-      (supersonic-player--insert-controls '(like shuffle prev toggle next repeat))
+      ;; Symmetric about play/pause, so it sits under the title.
+      (supersonic-player--insert-controls '(like shuffle prev toggle next repeat radio))
       (supersonic-player--insert-volume)
       (insert (propertize "\n" 'line-height 0.8))
       (supersonic-player--insert-lyrics)
@@ -563,9 +571,10 @@ the accent colour itself; the big play/pause gets a halo instead."
                   (put-text-property pos (1+ pos) 'display
                                      (supersonic-player--progress-image
                                       (get-text-property pos 'supersonic-player-progress)))))
-        (if (and window (not (eq window (selected-window))))
-            (with-selected-window window (redraw))
-          (redraw))))))
+        (supersonic-browse--keeping-scroll window
+          (if (and window (not (eq window (selected-window))))
+              (with-selected-window window (redraw))
+            (redraw)))))))
 
 (defun supersonic-player--update-timer ()
   "Run the progress timer exactly while something plays and the page is shown."

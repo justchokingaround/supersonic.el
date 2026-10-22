@@ -1041,6 +1041,20 @@ window's frame draws it, and loads finish in process callbacks."
                (append (cl-mapcar (lambda (x y) (+ (* amount x) (* (- 1 amount) y))) ra rb) '(2)))
       b)))
 
+(defmacro supersonic-browse--keeping-scroll (window &rest body)
+  "Run BODY, then put WINDOW's scroll back as it was, line and pixels.
+Changing a display property can make redisplay forget a partial
+scroll, which with a tall image in view is like being stuck."
+  (declare (indent 1))
+  (let ((w (make-symbol "window")) (start (make-symbol "start")) (vscroll (make-symbol "vscroll")))
+    `(let* ((,w ,window)
+            (,start (and (window-live-p ,w) (window-start ,w)))
+            (,vscroll (and (window-live-p ,w) (window-vscroll ,w t))))
+       (prog1 (progn ,@body)
+         (when (and ,start (window-live-p ,w) (eq (window-buffer ,w) (current-buffer)))
+           (set-window-start ,w (min ,start (point-max)) t)
+           (set-window-vscroll ,w ,vscroll t))))))
+
 (defun supersonic-browse--paint (pos on)
   "Show the item taking focus at POS as in focus if ON, else as not."
   (let ((inhibit-read-only t)
@@ -1080,7 +1094,7 @@ window's frame draws it, and loads finish in process callbacks."
           (move-overlay supersonic-browse--title-overlay pos
                         (or (next-single-property-change pos 'supersonic-browse-key) (point-max))))
          (t (delete-overlay supersonic-browse--title-overlay)))
-        (if (or (eq (car-safe key) 'track) (get-text-property pos 'supersonic-browse-row))
+        (if (or (eq (car-safe key) 'track) (get-text-property pos 'supersonic-browse-list-row))
             (let ((start (save-excursion (goto-char pos) (line-beginning-position)))
                   (end (save-excursion (goto-char pos) (1+ (line-end-position))))
                   (accent (supersonic-browse--accent)))
@@ -1095,16 +1109,17 @@ window's frame draws it, and loads finish in process callbacks."
           (delete-overlay supersonic-browse--bar-overlay))))))
 
 (defun supersonic-browse--update-focus ()
-  "Show which item is in focus: ringed and named if a tile, highlighted if a row."
+  "Show which item is in focus: glowing if a tile, highlighted if a row."
   (let ((key (get-text-property (point) 'supersonic-browse-key)))
     (unless (equal key supersonic-browse--selected)
+     (supersonic-browse--keeping-scroll (get-buffer-window (current-buffer))
       (let ((old (supersonic-browse--key-index supersonic-browse--selected))
             (new (supersonic-browse--key-index key)))
         (when old
           (supersonic-browse--paint (aref supersonic-browse--stops old) nil))
         (setq supersonic-browse--selected key)
         (when new
-          (supersonic-browse--paint (aref supersonic-browse--stops new) t))))))
+          (supersonic-browse--paint (aref supersonic-browse--stops new) t)))))))
 
 (defun supersonic-browse--post-command ()
   "Keep the focus shown where point is, after every command."
