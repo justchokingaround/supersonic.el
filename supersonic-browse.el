@@ -1108,11 +1108,22 @@ window's frame draws it, and loads finish in process callbacks."
           (setq i (1- i)))
         (max 0 i))))
 
+(defun supersonic-browse--reveal-top (window)
+  "Scroll WINDOW to the page's very top when that still shows point.
+Moving up to the first items otherwise leaves the title cut off."
+  (when (and window (> (window-start window) (point-min)))
+    (let ((need (cdr (window-text-pixel-size
+                      window (point-min) (save-excursion (forward-line 3) (point))))))
+      (when (<= need (window-body-height window t))
+        (set-window-start window (point-min))
+        (set-window-vscroll window 0 t)))))
+
 (defun supersonic-browse--goto-index (i)
   "Focus the item at stop I, if there is one."
   (when (and i (>= i 0) (< i (supersonic-browse--stop-count)))
     (goto-char (aref supersonic-browse--stops i))
     (supersonic-browse--update-focus)
+    (supersonic-browse--reveal-top (get-buffer-window (current-buffer)))
     t))
 
 (defun supersonic-browse--blend (a b amount)
