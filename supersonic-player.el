@@ -71,6 +71,7 @@ tracks after the current one as (QUEUE-INDEX . TRACK).")
 (defvar-local supersonic-player--timer nil "Timer moving the progress bar.")
 (defvar-local supersonic-player--generation 0 "Bumped per refresh, so stale ones are dropped.")
 (defvar-local supersonic-player--width nil "Window width the page was laid out for.")
+(defvar-local supersonic-player--height nil "Window height the page was laid out for.")
 (defvar-local supersonic-player--shown-track nil "Id of the track the page was last laid out for.")
 
 ;;;
@@ -377,9 +378,10 @@ in should they turn up after all."
          (thumb 44)
          (strut (supersonic-browse--row-strut)))
     (when upcoming
-      (insert "\n" (supersonic-browse--align left)
-              (propertize "Up next" 'face 'supersonic-browse-heading)
-              (propertize "\n" 'line-height 1.5))
+      (insert (propertize (concat "\n" (supersonic-browse--align left)
+                                  (propertize "Up next" 'face 'supersonic-browse-heading)
+                                  (propertize "\n" 'line-height 1.5))
+                          'supersonic-player-upcoming t))
       (supersonic-browse--new-region)
       (dolist (entry upcoming)
         (let* ((index (car entry))
@@ -522,6 +524,8 @@ in should they turn up after all."
           ;; Once more, with the cover sized to fit.
           (let ((supersonic-player--fitting t))
             (supersonic-player--render-here))
+        (when (and window track graphic)
+          (supersonic-player--trim-upcoming window))
         (supersonic-browse--update-focus)
         (supersonic-player--fetch-art)
         (supersonic-player--update-timer)))))
@@ -636,6 +640,37 @@ in should they turn up after all."
       (cancel-timer supersonic-player--timer)
       (setq supersonic-player--timer nil)))))
 
+(defun supersonic-player--trim-upcoming (window)
+  "Leave out the rows of Up next that WINDOW would not show whole.
+And Up next itself if not one would: a row cut off at the bottom of
+the page looks broken.  The whole queue is a key away."
+  (setq supersonic-player--height (window-body-height window t))
+  (let ((inhibit-read-only t)
+        (heading (text-property-any (point-min) (point-max) 'supersonic-player-upcoming t))
+        (trimmed nil))
+    (when heading
+      (let ((last nil))
+        (while (and (setq last (save-excursion
+                                 (goto-char (point-max))
+                                 (let ((match (text-property-search-backward 'supersonic-browse-list-row t t)))
+                                   (and match (> (prop-match-beginning match) heading)
+                                        (prop-match-beginning match)))))
+                    (> (cdr (window-text-pixel-size window (point-min)
+                                                    (save-excursion (goto-char last) (line-end-position))))
+                       supersonic-player--height))
+          (delete-region (save-excursion (goto-char last) (line-beginning-position))
+                         (save-excursion (goto-char last) (min (point-max) (1+ (line-end-position)))))
+          (setq trimmed t))
+        (unless last
+          (delete-region heading (point-max))
+          (insert "\n")
+          (setq trimmed t))))
+    (when trimmed
+      (supersonic-browse--index-stops)
+      (unless (get-text-property (point) 'supersonic-browse-focus)
+        (let ((i (supersonic-browse--key-index '(button toggle))))
+          (when i (goto-char (aref supersonic-browse--stops i))))))))
+
 (defun supersonic-player--lyrics-changed ()
   "Redraw the lyrics lines in place, keeping the rest of the page still."
   (let ((buff (get-buffer supersonic-player-buffer-name)))
@@ -646,6 +681,12 @@ in should they turn up after all."
             (let ((end (or (text-property-not-all start (point-max) 'supersonic-player-lyrics t) (point-max)))
                   (inhibit-read-only t)
                   (window (get-buffer-window buff t)))
+             ;; Lyrics turning up, or found to be missing, change the
+             ;; page's height: lay it all out again, to fit.
+             (if (not (eq (= (count-lines start end) 1)
+                          (and (not (supersonic-player--lyrics-lines))
+                               (not (eq (bound-and-true-p supersonic-lyrics--status) 'loading)))))
+                 (supersonic-player--render)
               (let ((top (and window (window-start window))))
                 (save-excursion
                   (delete-region start end))
@@ -660,7 +701,7 @@ in should they turn up after all."
                         (with-current-buffer buff (insert-at-start)))
                     (insert-at-start)))
                 (when window (set-window-start window top t)))
-              (supersonic-browse--index-stops))))))))
+              (supersonic-browse--index-stops)))))))))
 
 (defun supersonic-player--window-changed (window)
   "Lay the page out again if WINDOW, showing it, changed width; back to the top.
@@ -668,7 +709,8 @@ A window shown again, or growing back, may have been scrolled while it
 was small to keep the control in focus in view; the page is meant to
 be seen from its top."
   (with-current-buffer (window-buffer window)
-    (unless (eql supersonic-player--width (window-body-width window t))
+    (unless (and (eql supersonic-player--width (window-body-width window t))
+                 (eql supersonic-player--height (window-body-height window t)))
       (supersonic-player--render))
     (set-window-start window (point-min) t)))
 
