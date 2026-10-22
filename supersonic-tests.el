@@ -9283,6 +9283,34 @@ played most, best first and without repeats."
                    (mapcar (lambda (x) (plist-get x :id))
                            (aio-wait-for (supersonic-subsonic--top-tracks '(:id "ar1" :name "Tally Hall") 5)))))))
 
+(ert-deftest supersonic-tests-browse-initials-of-signs ()
+  "A name of no letters or digits, or none at all, gets a note, not an error."
+  (require 'supersonic-browse)
+  (should (equal "♪" (supersonic-browse--initials "?")))
+  (should (equal "♪" (supersonic-browse--initials "")))
+  (should (equal "♪" (supersonic-browse--initials nil))))
+
+(ert-deftest supersonic-tests-mpv-get-property-gives-up ()
+  "A property mpv never answers for resolves to nil after the timeout."
+  (let ((supersonic-mpv-reply-timeout 0.1)
+        (supersonic-mpv--pending-requests (make-hash-table)))
+    (cl-letf (((symbol-function 'supersonic-mpv-command-with-callback) (lambda (&rest _) t)))
+      (should-not (aio-wait-for (supersonic-mpv-get-property "pause"))))))
+
+(ert-deftest supersonic-tests-browse-buttons-run-commands-interactively ()
+  "A button whose action is a command runs it as a key would, asking what it asks."
+  (require 'supersonic-browse)
+  (let ((got nil))
+    (with-temp-buffer
+      (supersonic-browse-mode)
+      (let ((inhibit-read-only t)
+            (command (lambda (x) (interactive (list 'asked)) (setq got x))))
+        (insert (propertize "R" 'supersonic-browse-focus t 'supersonic-browse-key '(button radio)
+                            'supersonic-browse-item (list :action command))))
+      (goto-char (point-min))
+      (supersonic-browse-open))
+    (should (eq 'asked got))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here

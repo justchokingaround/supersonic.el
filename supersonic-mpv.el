@@ -347,12 +347,22 @@ was sent, nil if mpv is not running, in which case CALLBACK is dropped."
 (aio-defun
  supersonic-mpv-get-property (name)
  "Return a promise resolving to mpv's current value of property NAME.
-Resolves to nil if the request could not be sent."
- (let ((promise (aio-promise)))
+Resolves to nil if the request could not be sent, or if mpv has not
+answered within `supersonic-mpv-reply-timeout' seconds: an mpv that
+hangs must not leave whoever waits on it -- `aio-wait-for' in a
+command, say -- hanging too."
+ (let* ((promise (aio-promise))
+        (timer (run-at-time supersonic-mpv-reply-timeout nil
+                            (lambda ()
+                              (unless (aio-result promise)
+                                (aio-resolve promise (lambda () nil)))))))
    (if (supersonic-mpv-command-with-callback (lambda (response)
-                                               (aio-resolve promise (lambda () (alist-get 'data response))))
+                                               (cancel-timer timer)
+                                               (unless (aio-result promise)
+                                                 (aio-resolve promise (lambda () (alist-get 'data response)))))
                                              "get_property" name)
        (aio-await promise)
+     (cancel-timer timer)
      nil)))
 
 (defun supersonic-mpv-toggle-play ()

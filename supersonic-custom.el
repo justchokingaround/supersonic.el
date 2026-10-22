@@ -278,6 +278,12 @@ name a stream URL, the jukebox only for `subsonic'.  Switching with
   :type '(choice (const :tag "Local mpv process" mpv) (symbol :tag "Other registered backend"))
   :group 'supersonic)
 
+(defcustom supersonic-mpv-reply-timeout 2
+  "Seconds to wait for mpv to answer a question before giving up on it.
+mpv answers in milliseconds; one that does not has hung."
+  :type 'number
+  :group 'supersonic)
+
 (defcustom supersonic-mpv-timeout 0.5
   "Seconds to wait when starting or killing the mpv process."
   :type 'number

@@ -147,8 +147,11 @@ may run while a daemon's terminal frame is selected."
   "Return up to two initials of NAME."
   (let ((words (seq-filter (lambda (w) (string-match-p "[[:alnum:]]" w))
                            (split-string (or name "?") "[[:space:]]+" t))))
-    (upcase (apply #'string (mapcar (lambda (w) (aref (replace-regexp-in-string "[^[:alnum:]]" "" w) 0))
-                                    (seq-take (or words '("?")) 2))))))
+    (if (not words)
+        ;; Nothing to take an initial from, as in a name of only signs.
+        "♪"
+      (upcase (apply #'string (mapcar (lambda (w) (aref (replace-regexp-in-string "[^[:alnum:]]" "" w) 0))
+                                      (seq-take words 2)))))))
 
 (defun supersonic-browse--duration (seconds)
   "Return SECONDS as M:SS, or H:MM:SS from an hour on."
@@ -1539,7 +1542,10 @@ TYPE is one of `supersonic-provider-album-list-types'."
       ('playlist (supersonic-browse-visit (list :kind 'playlist :id (plist-get item :id) :item item)))
       ('track (supersonic-playback-start (nthcdr (get-text-property (point) 'supersonic-browse-index)
                                                  (get-text-property (point) 'supersonic-browse-ids))))
-      ((or 'button 'more) (funcall (plist-get item :action)))
+      ((or 'button 'more)
+       (let ((action (plist-get item :action)))
+         ;; A command asks what it needs, as when run with a key.
+         (if (commandp action) (call-interactively action) (funcall action))))
       ('hero (call-interactively (cadr key)))
       ('page (supersonic-browse-play))
       (_ (user-error "Nothing to open here")))))
