@@ -9093,23 +9093,6 @@ name cannot hold replaced, and their lyrics as LRC."
                  (supersonic-download--lrc '(:lines ((62500 . "Hello") (nil . "Plain"))))))
   (should (equal "\"a\\\"b\\\\c\"\n" (supersonic-download--config-string "a\"b\\c"))))
 
-(ert-deftest supersonic-tests-browse-jump-to-letter ()
-  "Jumping to a letter focuses the first artist or album named so,
-leaving out a leading article."
-  (supersonic-tests--with-browse-stops
-      '(((artist "1") 1 1 0 0) ((artist "2") 1 1 0 1 same-line) ((artist "3") 1 1 0 2 same-line))
-    (dotimes (i 3)
-      (let ((inhibit-read-only t)) (put-text-property (aref supersonic-browse--stops i) (1+ (aref supersonic-browse--stops i))
-                         'supersonic-browse-item (list :name (nth i '("ABBA" "The Beatles" "Dido"))))))
-    (supersonic-browse-jump ?b)
-    (should (equal '(artist "2") (supersonic-tests--browse-at)))
-    (should-error (supersonic-browse-jump ?z) :type 'user-error)
-    ;; The artists page is sorted: no C, so on to the next there is.
-    (setq supersonic-browse--page '(:kind artists))
-    (supersonic-browse-jump ?a)
-    (supersonic-browse-jump ?c)
-    (should (equal '(artist "3") (supersonic-tests--browse-at)))))
-
 (ert-deftest supersonic-tests-browse-album-list-loads-more ()
   "Focus near the end of an album list loads the albums after it, adds
 those not shown yet, and stops once the list runs out."

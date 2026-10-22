@@ -1329,34 +1329,6 @@ scroll, which with a tall image in view is like being stuck."
                          (plist-put (copy-sequence supersonic-browse--content) :albums (append albums new)))
                    (supersonic-browse--render)))))))))))
 
-(defun supersonic-browse--sort-name (name)
-  "Return NAME as lists sort it: lower case, without a leading article."
-  (let ((case-fold-search t))
-    (downcase (replace-regexp-in-string "\\`\\(the\\|an?\\) +" "" name))))
-
-(defun supersonic-browse-jump (char)
-  "Focus the first artist or album whose name starts with CHAR.
-A leading \"The\" or \"A\" does not count, as in sorted lists.  On the
-artists page, sorted by name, a letter nobody starts with goes to the
-next one somebody does.  The item lands near the top of the window."
-  (interactive (list (read-char "Jump to the letter: ")))
-  (let* ((prefix (downcase (char-to-string char)))
-         (sorted (eq (plist-get supersonic-browse--page :kind) 'artists))
-         (found nil))
-    (dotimes (i (supersonic-browse--stop-count))
-      (unless found
-        (let ((name (supersonic-browse--sort-name
-                     (or (plist-get (supersonic-browse--prop i 'supersonic-browse-item) :name) ""))))
-          (when (and (memq (car-safe (supersonic-browse--prop i 'supersonic-browse-key)) '(artist album))
-                     (or (string-prefix-p prefix name) (and sorted (string< prefix name))))
-            (setq found i)))))
-    (unless (supersonic-browse--goto-index found)
-      (user-error "Nothing here starts with %s" prefix))
-    (let ((window (get-buffer-window (current-buffer))))
-      (when window
-        (set-window-start window (line-beginning-position 0))))
-    (message "%s" (plist-get (get-text-property (point) 'supersonic-browse-item) :name))))
-
 (defun supersonic-browse--isearch-done ()
   "Focus the item a search ended on, scrolling to it if need be."
   (unless isearch-mode-end-hook-quit
@@ -2032,7 +2004,6 @@ Asks first."
      ("back / forward" supersonic-browse-back supersonic-browse-forward)
      ("home" supersonic-browse-home)
      ("search" supersonic-browse-search)
-     ("jump to a letter" supersonic-browse-jump)
      ("reload" supersonic-browse-reload))
     ("The queue" queue
      ("play this one" supersonic-browse-open)
@@ -2295,7 +2266,6 @@ The keys are read off the keymaps, so they are the ones bound."
     (define-key map (kbd "h") #'supersonic-browse-home)
     (define-key map (kbd "A") #'supersonic-browse-add-to-playlist)
     (define-key map (kbd "S") #'supersonic-browse-download)
-    (define-key map (kbd "j") #'supersonic-browse-jump)
     (define-key map (kbd "x") #'supersonic-browse-radio)
     (define-key map (kbd "*") #'supersonic-browse-star)
     (define-key map (kbd "d") #'supersonic-browse-playlist-remove)
