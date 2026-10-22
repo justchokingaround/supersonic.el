@@ -8990,6 +8990,33 @@ grids; TAB goes region by region, round from the last to the first."
         (supersonic-browse-open)))
     (should (equal '(more surprise) ran))))
 
+(ert-deftest supersonic-tests-browse-queue-page ()
+  "The queue page resolves each entry's track, marks the current one, and
+RET on a row plays that entry rather than starting a new queue."
+  (require 'supersonic-browse)
+  (let (played)
+    (supersonic-tests--with-backend
+     `((queue . ,(supersonic-tests--resolved
+                  '((:track-id "a" :track (:id "a" :title "Brought"))
+                    (:track-id "b" :current t))))
+       (live-p . ,(lambda () t))
+       (play-index . ,(lambda (index) (push index played))))
+     (supersonic-tests--with-provider
+         `((track . ,(lambda (id) (funcall (supersonic-tests--resolved (list :id id :title "Looked up"))))))
+       (let ((tracks (plist-get (supersonic-tests--resolve (supersonic-browse--load-content '(:kind queue)))
+                                :tracks)))
+         (should (equal '("Brought" "Looked up") (mapcar (lambda (track) (plist-get track :title)) tracks)))
+         (should (equal '(nil t) (mapcar (lambda (track) (plist-get track :queue-current)) tracks))))
+       (with-temp-buffer
+         (supersonic-browse-mode)
+         (setq supersonic-browse--page '(:kind queue))
+         (let ((inhibit-read-only t))
+           (insert (propertize "Song" 'supersonic-browse-focus t 'supersonic-browse-key '(track "b" 1)
+                               'supersonic-browse-index 1 'supersonic-browse-ids '("a" "b"))))
+         (goto-char (point-min))
+         (supersonic-browse-open))))
+    (should (equal '(1) played))))
+
 (ert-deftest supersonic-tests-browse-row-start-and-end ()
   "Line start and end go to the first and last item of the line, then of
 the section; the same for lines of one item, like tracks."

@@ -478,7 +478,9 @@ An album over several discs gets a heading per disc."
        (insert (supersonic-browse--align title-x)
                (propertize (format "Disc %d" disc) 'face 'supersonic-browse-hint)
                (propertize "\n" 'line-height 1.6)))
-     (let* ((playing (and supersonic-browse--playing (equal (plist-get track :id) supersonic-browse--playing)))
+     (let* ((playing (if (eq (plist-get supersonic-browse--page :kind) 'queue)
+                         (plist-get track :queue-current)
+                       (and supersonic-browse--playing (equal (plist-get track :id) supersonic-browse--playing))))
             (number (propertize (number-to-string number)
                                 'face (if playing 'supersonic-browse-playing 'supersonic-browse-track-number)))
             (duration (supersonic-browse--duration (plist-get track :duration)))
@@ -657,6 +659,7 @@ of its own, so they take focus like any other."
     ('album (or (plist-get (plist-get page :item) :name) "Album"))
     ('playlists "Playlists")
     ('starred "Favourites")
+    ('queue "Queue")
     ('genres "Genres")
     ('genre (plist-get page :id))
     ('playlist (or (plist-get (plist-get page :item) :name) "Playlist"))
@@ -701,6 +704,22 @@ of its own, so they take focus like any other."
    ('artists (list :artists (aio-await (supersonic-provider-artists))))
    ('playlists (list :playlists (aio-await (supersonic-provider-playlists))))
    ('starred (list :starred (aio-await (supersonic-provider-starred))))
+   ('queue
+    (let ((pending (mapcar (lambda (entry)
+                             (list entry
+                                   (and (not (plist-get entry :track)) (plist-get entry :track-id)
+                                        (aio-catch (supersonic-provider-track (plist-get entry :track-id))))))
+                           (aio-await (supersonic-playback-queue))))
+          tracks)
+      ;; `dolist', so that `aio-await' stays where generator.el transforms it.
+      (dolist (item pending)
+        (let* ((entry (car item))
+               (outcome (and (cadr item) (aio-await (cadr item))))
+               (track (or (plist-get entry :track)
+                          (and (eq (car outcome) :success) (cdr outcome))
+                          (list :id (plist-get entry :track-id) :title "?"))))
+          (push (append (list :queue-current (plist-get entry :current)) track) tracks)))
+      (list :tracks (nreverse tracks))))
    ('genres (list :genres (supersonic-browse--genre-cards (aio-await (supersonic-provider-genres)))))
    ('genre (list :albums (aio-await (supersonic-provider-genre-albums (plist-get page :id) supersonic-album-list-count))))
    ('playlist (list :tracks (aio-await (supersonic-provider-playlist-tracks (plist-get page :id)))))
@@ -855,6 +874,19 @@ of its own, so they take focus like any other."
                        " · "))
          (insert (propertize "\n" 'line-height 1.4))
          (supersonic-browse--insert-tracks tracks)))
+      ('queue
+       (let* ((tracks (plist-get content :tracks))
+              (current (seq-position tracks t (lambda (track _) (plist-get track :queue-current))))
+              (left (and current (apply #'+ (mapcar (lambda (track) (or (plist-get track :duration) 0))
+                                                    (nthcdr current tracks))))))
+         (supersonic-browse--title "Queue"
+                                   (string-join (delq nil (list (supersonic-browse--plural (length tracks) "song")
+                                                                (and left (concat (supersonic-browse--total left) " left"))))
+                                                " · "))
+         (if tracks
+             (progn (insert "\n") (supersonic-browse--insert-tracks tracks t))
+           (insert "\n" (supersonic-browse--space supersonic-browse-margin)
+                   (propertize "Nothing queued." 'face 'shadow) "\n"))))
       ('starred
        (let* ((starred (plist-get content :starred))
               (tracks (plist-get starred :tracks)))
@@ -1615,6 +1647,12 @@ TYPE is one of `supersonic-provider-album-list-types'."
   (supersonic-browse-visit '(:kind starred)))
 
 ;;;###autoload
+(defun supersonic-browse-queue ()
+  "Show the play queue in the browser."
+  (interactive)
+  (supersonic-browse-visit '(:kind queue)))
+
+;;;###autoload
 (defun supersonic-browse-genres ()
   "Show every genre in the browser."
   (interactive)
@@ -1651,8 +1689,10 @@ TYPE is one of `supersonic-provider-album-list-types'."
       ('album (supersonic-browse-visit (list :kind 'album :id (plist-get item :id) :item item)))
       ('playlist (supersonic-browse-visit (list :kind 'playlist :id (plist-get item :id) :item item)))
       ('genre (supersonic-browse-visit (list :kind 'genre :id (plist-get item :id) :item item)))
-      ('track (supersonic-playback-start (nthcdr (get-text-property (point) 'supersonic-browse-index)
-                                                 (get-text-property (point) 'supersonic-browse-ids))))
+      ('track (if (eq (plist-get supersonic-browse--page :kind) 'queue)
+                  (supersonic-playback-play-index (get-text-property (point) 'supersonic-browse-index))
+                (supersonic-playback-start (nthcdr (get-text-property (point) 'supersonic-browse-index)
+                                                   (get-text-property (point) 'supersonic-browse-ids)))))
       ((or 'button 'more)
        (let ((action (plist-get item :action)))
          ;; A command asks what it needs, as when run with a key.
@@ -1730,31 +1770,36 @@ TYPE is one of `supersonic-provider-album-list-types'."
           (supersonic-browse-reload))))))
 
 (defun supersonic-browse--playlist-row ()
-  "Return the position of the playlist track in focus, or complain."
-  (unless (eq (plist-get supersonic-browse--page :kind) 'playlist)
-    (user-error "Only on a playlist's page"))
+  "Return the position of the playlist or queue track in focus, or complain."
+  (unless (memq (plist-get supersonic-browse--page :kind) '(playlist queue))
+    (user-error "Only on a playlist's page or the queue"))
   (unless (eq (car-safe (get-text-property (point) 'supersonic-browse-key)) 'track)
     (user-error "No song here"))
   (get-text-property (point) 'supersonic-browse-index))
 
 (defun supersonic-browse-playlist-remove ()
-  "Remove the song in focus from this playlist."
+  "Remove the song in focus from this playlist or the queue."
   (interactive)
   (let ((row (supersonic-browse--playlist-row)))
-    (aio-wait-for (supersonic-provider-edit-playlist (plist-get supersonic-browse--page :id) (list :remove (list row))))
     (setq supersonic-browse--restore-row (max 0 (min row (- (length (plist-get supersonic-browse--content :tracks)) 2))))
-    (supersonic-browse-reload)))
+    ;; The queue's change hook shows the queue anew by itself.
+    (if (eq (plist-get supersonic-browse--page :kind) 'queue)
+        (supersonic-playback-remove row)
+      (aio-wait-for (supersonic-provider-edit-playlist (plist-get supersonic-browse--page :id) (list :remove (list row))))
+      (supersonic-browse-reload))))
 
 (defun supersonic-browse--playlist-move (delta)
-  "Move the song in focus DELTA places in this playlist."
+  "Move the song in focus DELTA places in this playlist or the queue."
   (let* ((row (supersonic-browse--playlist-row))
          (ids (vconcat (mapcar (lambda (track) (plist-get track :id)) (plist-get supersonic-browse--content :tracks))))
          (to (+ row delta)))
     (when (and (>= to 0) (< to (length ids)))
-      (cl-rotatef (aref ids row) (aref ids to))
-      (aio-wait-for (supersonic-provider-set-playlist-tracks (plist-get supersonic-browse--page :id) (append ids nil)))
       (setq supersonic-browse--restore-row to)
-      (supersonic-browse-reload))))
+      (if (eq (plist-get supersonic-browse--page :kind) 'queue)
+          (supersonic-playback-move row to)
+        (cl-rotatef (aref ids row) (aref ids to))
+        (aio-wait-for (supersonic-provider-set-playlist-tracks (plist-get supersonic-browse--page :id) (append ids nil)))
+        (supersonic-browse-reload)))))
 
 (defun supersonic-browse-playlist-move-up ()
   "Move the song in focus one place up this playlist."
@@ -1847,6 +1892,11 @@ TYPE is one of `supersonic-provider-album-list-types'."
      ("home" supersonic-browse-home)
      ("search" supersonic-browse-search)
      ("reload" supersonic-browse-reload))
+    ("The queue" queue
+     ("play this one" supersonic-browse-open)
+     ("remove it" supersonic-browse-playlist-remove)
+     ("move it up / down" supersonic-browse-playlist-move-up supersonic-browse-playlist-move-down)
+     ("clear all but the one playing" supersonic-clear-queue))
     ("A playlist's page" playlist
      ("remove the song" supersonic-browse-playlist-remove)
      ("move it up / down" supersonic-browse-playlist-move-up supersonic-browse-playlist-move-down)
@@ -1972,6 +2022,8 @@ PREFIX is put before the keys of a `prefix' section."
                                     ('playlist (and browser (eq (plist-get page :kind) 'playlist)
                                                     (supersonic-cheatsheet--entries section maps prefix)))
                                     ('player (and player (supersonic-cheatsheet--entries section maps prefix)))
+                                    ('queue (and browser (eq (plist-get page :kind) 'queue)
+                                                 (supersonic-cheatsheet--entries section maps prefix)))
                                     ('prefix (and supersonic-cheatsheet-show-prefix
                                                   (supersonic-cheatsheet--entries section prefix-maps prefix))))))
                      (and entries (cons (car section) entries))))
@@ -2063,7 +2115,17 @@ The keys are read off the keymaps, so they are the ones bound."
                           (unless (equal (cdr outcome) supersonic-browse--playing)
                             (setq supersonic-browse--playing (cdr outcome))
                             (when (memq (plist-get supersonic-browse--page :kind) '(album search))
-                              (supersonic-browse--render)))))))))))
+                              (supersonic-browse--render)))
+                          (when (eq (plist-get supersonic-browse--page :kind) 'queue)
+                            (supersonic-browse-reload))))))))))
+
+(defun supersonic-browse--queue-changed ()
+  "Show the queue anew, if the browser shows it."
+  (let ((buff (get-buffer supersonic-browse-buffer-name)))
+    (when (and (buffer-live-p buff)
+               (eq (plist-get (buffer-local-value 'supersonic-browse--page buff) :kind) 'queue))
+      (with-current-buffer buff
+        (supersonic-browse-reload)))))
 
 (defun supersonic-browse--window-changed (window)
   "Lay the page out again if WINDOW, showing it, changed width."
@@ -2094,6 +2156,7 @@ The keys are read off the keymaps, so they are the ones bound."
     (define-key map (kbd "M-<down>") #'supersonic-browse-playlist-move-down)
     (define-key map (kbd "e") #'supersonic-browse-playlist-rename)
     (define-key map (kbd "D") #'supersonic-browse-playlist-delete)
+    (define-key map (kbd "C") #'supersonic-clear-queue)
     (define-key map (kbd "/") #'supersonic-browse-search)
     (define-key map (kbd "g") #'supersonic-browse-reload)
     ;; The same transport keys as everywhere in supersonic; moving
@@ -2169,6 +2232,7 @@ The keys are read off the keymaps, so they are the ones bound."
   (add-hook 'isearch-mode-end-hook #'supersonic-browse--isearch-done nil t)
   (add-hook 'window-size-change-functions #'supersonic-browse--window-changed nil t)
   (add-hook 'supersonic-playback-track-change-hook #'supersonic-browse--track-changed)
+  (add-hook 'supersonic-playback-queue-change-hook #'supersonic-browse--queue-changed)
   (setq supersonic-browse--playing nil)
   (supersonic-browse--track-changed))
 
