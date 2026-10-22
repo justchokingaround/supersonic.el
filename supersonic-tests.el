@@ -9134,8 +9134,8 @@ marked in the library, and gone once deleted."
           (write-region (prin1-to-string '(:id "al1" :name "Live" :artist "Band" :year 2001)) nil
                         (expand-file-name ".supersonic-album" dir))
           (should (equal '("al1") (mapcar (lambda (a) (plist-get a :id)) (supersonic-download-albums))))
-          (should (equal "✓ Band · 2001" (supersonic-browse--subtitle '(:id "al1" :name "Live" :artist "Band" :year 2001))))
-          (should (equal "Band" (supersonic-browse--subtitle '(:id "al2" :name "Other" :artist "Band"))))
+          (should (supersonic-browse--saved-p '(:id "al1" :name "Live")))
+          (should-not (supersonic-browse--saved-p '(:id "al2" :name "Other")))
           (supersonic-download-delete-album (car (supersonic-download-albums)))
           (should-not (supersonic-download-albums))
           (should-not (file-exists-p (expand-file-name "Band" supersonic-download-directory))))

@@ -276,7 +276,8 @@ The art is the same size either way, so nothing moves as focus does;
 the tile in focus glows in the accent colour around its edges."
   (let* ((size supersonic-browse-tile-size)
          (file (supersonic-browse--art-file item (* 2 size)))
-         (cache-key (list (plist-get item :id) shape selected file size))
+         (saved (supersonic-browse--saved-p item))
+         (cache-key (list (plist-get item :id) shape selected file size saved))
          (cached (and supersonic-browse--images (gethash cache-key supersonic-browse--images))))
     (or cached
         (let* ((svg (svg-create size size))
@@ -303,6 +304,20 @@ the tile in focus glows in the accent colour around its edges."
                           `(stroke-width . ,(if selected 1.5 1)))))
             (dom-set-attribute outline 'transform (format "translate(%s,%s)" inset inset))
             (dom-append-child svg outline))
+          (when saved
+            ;; A check mark in a disc, bottom right: saved for offline.
+            (let* ((r (* size 0.075))
+                   (cx (- (+ inset inner) r (* size 0.04)))
+                   (cy cx))
+              (dom-append-child svg (dom-node 'circle `((cx . ,cx) (cy . ,cy) (r . ,r) (fill . ,accent)
+                                                        (stroke . "#000000") (stroke-opacity . "0.35"))))
+              (dom-append-child svg (dom-node 'path `((d . ,(format "M%s %s L%s %s L%s %s"
+                                                                     (- cx (* r 0.45)) cy
+                                                                     (- cx (* r 0.1)) (+ cy (* r 0.38))
+                                                                     (+ cx (* r 0.5)) (- cy (* r 0.4))))
+                                                      (fill . "none") (stroke . "#ffffff")
+                                                      (stroke-width . ,(max 1.5 (* r 0.22)))
+                                                      (stroke-linecap . "round") (stroke-linejoin . "round"))))))
           (let ((image (apply #'svg-image svg :ascent 100 :scale 1 (and file (list :base-uri file)))))
             (unless supersonic-browse--images
               (setq supersonic-browse--images (make-hash-table :test #'equal)))
@@ -415,14 +430,11 @@ At most MAX-ROWS rows of them, if given."
        (insert "\n"))
      (insert (propertize "\n" 'line-height 0.6)))))
 
-(defun supersonic-browse--subtitle (item)
-  "Return the line under ITEM's tile, marked if the album is saved offline."
-  (let ((text (supersonic-browse--subtitle-text item)))
-    (if (and (fboundp 'supersonic-download-album-p) (supersonic-download-album-p (plist-get item :id)))
-        (concat "✓ " text)
-      text)))
+(defun supersonic-browse--saved-p (item)
+  "Return non-nil if ITEM is an album saved for offline use."
+  (and (fboundp 'supersonic-download-album-p) (supersonic-download-album-p (plist-get item :id))))
 
-(defun supersonic-browse--subtitle-text (item)
+(defun supersonic-browse--subtitle (item)
   "Return what the line under ITEM's tile says.
 On an artist's own page, its albums say their year and size instead
 of the artist's name over and over."
