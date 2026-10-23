@@ -1778,7 +1778,7 @@ is loading, so a change to it does not flash."
 
 ;;;###autoload
 (defun supersonic-browse-home ()
-  "Show the browser's home page."
+  "Show the browser's home page, from wherever it was left."
   (interactive)
   (supersonic-browse-visit '(:kind home)))
 
@@ -2257,7 +2257,7 @@ Asks first."
      ("back to the library" supersonic-player-library)
      ("reload" supersonic-player-refresh))
     ("From anywhere" prefix
-     ("library" supersonic-browse)
+     ("library home" (:or supersonic-browse-home supersonic-browse))
      ("now playing" (:or supersonic-player supersonic-show-now-playing))
      ("search" (:or supersonic-consult supersonic-browse-search supersonic-search-read))
      ("artists" supersonic-browse-artists)
