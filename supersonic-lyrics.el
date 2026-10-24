@@ -368,7 +368,7 @@ TRACK is its track plist.  Answers from the cache unless REFRESH."
 ;;;
 
 (defvar supersonic-lyrics-follow-mode)
-(declare-function tile-hint-line "tile")
+(declare-function grout-hint-line "grout")
 (defvar supersonic-lyrics-mode-map)
 
 (defvar supersonic-lyrics-line nil
@@ -828,10 +828,10 @@ stretch of the same properties."
                                                   (if supersonic-lyrics-show-translation "" " (hidden)")))
                                          (t "")))
                            'face '(shadow (:height 0.85))))))
-    ;; Key hints as the tile pages show them, when tile is there.
-    (when (and track (require 'tile nil t))
+    ;; Key hints as the grout pages show them, when grout is there.
+    (when (and track (require 'grout nil t))
       (insert (supersonic-lyrics--centered
-               (tile-hint-line
+               (grout-hint-line
                 '((supersonic-lyrics-seek-to-line . "play from here") (supersonic-lyrics-toggle-follow . "follow")
                   ((supersonic-lyrics-later supersonic-lyrics-earlier) . "sync")
                   (supersonic-lyrics-toggle-translation . "translation") (quit-window . "close"))
