@@ -8829,59 +8829,6 @@ answer of nil marks the lyrics as needing none, so it is not asked again."
           (should-not (supersonic-local--load-index)))
       (delete-directory supersonic-cache-path t))))
 
-(ert-deftest supersonic-tests-browse-formatting ()
-  "Durations, totals, counts and initials read the way the browser shows them."
-  (require 'supersonic-browse)
-  (should (equal "3:10" (supersonic-browse--duration 190)))
-  (should (equal "1:02:05" (supersonic-browse--duration 3725)))
-  (should (equal "" (supersonic-browse--duration nil)))
-  (should (equal "41 min" (supersonic-browse--total 2460)))
-  (should (equal "1 h 5 min" (supersonic-browse--total 3900)))
-  (should (equal "1 album" (supersonic-browse--plural 1 "album")))
-  (should (equal "7 albums" (supersonic-browse--plural 7 "album")))
-  (should (equal "JC" (supersonic-browse--initials "Jonathan Coulton")))
-  (should (equal "К" (supersonic-browse--initials "Кино")))
-  (should (equal "AH" (supersonic-browse--initials "A - ha"))))
-
-(ert-deftest supersonic-tests-browse-placeholder-colour-is-stable ()
-  "A tile without art gets the same colour for the same name every time."
-  (require 'supersonic-browse)
-  (should (= (supersonic-browse--hue "Tally Hall") (supersonic-browse--hue "Tally Hall")))
-  (should (<= 0 (supersonic-browse--hue "x") 1))
-  (should (string-match-p "\\`#[0-9a-f]\\{6\\}\\'" (supersonic-browse--hsl 0.5 0.5 0.5))))
-
-(ert-deftest supersonic-tests-browse-subtitles ()
-  "Tiles say what matters where they are: an artist's album count, an
-album's artist and year, and on an artist's page an album's year and size."
-  (require 'supersonic-browse)
-  (with-temp-buffer
-    (should (equal "2 albums" (supersonic-browse--subtitle '(:name "A" :album-count 2))))
-    (should (equal "Oasis · 1995" (supersonic-browse--subtitle '(:name "M" :artist "Oasis" :year 1995))))
-    (setq supersonic-browse--page '(:kind artist))
-    (should (equal "1995 · 12 songs" (supersonic-browse--subtitle '(:name "M" :artist "Oasis" :year 1995 :song-count 12))))))
-
-(ert-deftest supersonic-tests-browse-history ()
-  "Visiting pages builds a history that back and forward walk, keeping focus."
-  (require 'supersonic-browse)
-  (cl-letf (((symbol-function 'supersonic-browse--load) #'ignore)
-            ((symbol-function 'pop-to-buffer-same-window) #'ignore))
-    (unwind-protect
-        (progn
-          (supersonic-browse-visit '(:kind home))
-          (with-current-buffer supersonic-browse-buffer-name
-            (setq supersonic-browse--selected '(album "a1")))
-          (supersonic-browse-visit '(:kind artists))
-          (supersonic-browse-visit '(:kind album :id "a1"))
-          (with-current-buffer supersonic-browse-buffer-name
-            (should (eq 'album (plist-get supersonic-browse--page :kind)))
-            (supersonic-browse-back 2)
-            (should (eq 'home (plist-get supersonic-browse--page :kind)))
-            (should (equal '(album "a1") supersonic-browse--selected))
-            (supersonic-browse-forward)
-            (should (eq 'artists (plist-get supersonic-browse--page :kind)))
-            (should-error (progn (supersonic-browse-forward) (supersonic-browse-forward)) :type 'user-error)))
-      (kill-buffer supersonic-browse-buffer-name))))
-
 (ert-deftest supersonic-tests-subsonic-image-size ()
   "Image dimensions are read off PNG, JPEG and WebP headers."
   (let ((png (concat "\x89PNG\r\n\x1a\n" (make-string 4 0) "IHDR"
@@ -8905,122 +8852,6 @@ been seen to scale art; before that, it is trusted."
     (should-not (supersonic-subsonic--placeholder-p scaled 336))
     (should supersonic-subsonic--server-scales)
     (should (supersonic-subsonic--placeholder-p big 336))))
-
-(defmacro supersonic-tests--with-browse-stops (layout &rest body)
-  "Run BODY in a browser buffer whose items are LAYOUT.
-LAYOUT is a list of (KEY REGION GRID ROW COL SAME-LINE), one
-focusable character each, on a line of its own unless SAME-LINE."
-  (declare (indent 1))
-  `(with-temp-buffer
-     (require 'supersonic-browse)
-     (supersonic-browse-mode)
-     (let ((inhibit-read-only t))
-       (dolist (stop ,layout)
-         (pcase-let ((`(,key ,region ,grid ,row ,col ,same-line) stop))
-           (when (and (not same-line) (> (point) (point-min)))
-             (insert "\n"))
-           (insert (propertize "*" 'supersonic-browse-focus t 'supersonic-browse-key key
-                               'supersonic-browse-region region 'supersonic-browse-grid grid
-                               'supersonic-browse-row row 'supersonic-browse-col col)
-                   " "))))
-     (supersonic-browse--index-stops)
-     (cl-letf (((symbol-function 'supersonic-browse--paint) #'ignore))
-       ,@body)))
-
-(defun supersonic-tests--browse-at ()
-  "Return the key of the item at point."
-  (get-text-property (point) 'supersonic-browse-key))
-
-(ert-deftest supersonic-tests-browse-moves-in-grids-and-regions ()
-  "Up and down keep the column across grid rows and step into and out of
-grids; TAB goes region by region, round from the last to the first."
-  (supersonic-tests--with-browse-stops
-      ;; Region 1: two buttons on one line.  Region 2: a 3-wide grid with 5 tiles.
-      ;; Region 3: two tracks.
-      '(((b 1) 1 nil nil nil) ((b 2) 1 nil nil nil same-line)
-        ((t 1) 2 1 0 0) ((t 2) 2 1 0 1) ((t 3) 2 1 0 2)
-        ((t 4) 2 1 1 0) ((t 5) 2 1 1 1)
-        ((r 1) 3 nil nil nil) ((r 2) 3 nil nil nil))
-    (supersonic-browse-first)
-    (should (equal '(b 1) (supersonic-tests--browse-at)))
-    (supersonic-browse-down)            ; off the line of buttons, not along it
-    (should (equal '(t 1) (supersonic-tests--browse-at)))
-    (supersonic-browse-next) (supersonic-browse-next)
-    (should (equal '(t 3) (supersonic-tests--browse-at)))
-    (supersonic-browse-down)            ; no tile below column 2: the nearest before
-    (should (equal '(t 5) (supersonic-tests--browse-at)))
-    (supersonic-browse-down)            ; out of the grid
-    (should (equal '(r 1) (supersonic-tests--browse-at)))
-    (supersonic-browse-up)              ; back in, to the tile left from
-    (should (equal '(t 5) (supersonic-tests--browse-at)))
-    (supersonic-browse-up)              ; same column, a row up
-    (should (equal '(t 2) (supersonic-tests--browse-at)))
-    (supersonic-browse-next-section)
-    (should (equal '(r 1) (supersonic-tests--browse-at)))
-    (supersonic-browse-next-section)    ; round to the first
-    (should (equal '(b 1) (supersonic-tests--browse-at)))
-    (supersonic-browse-previous-section)
-    (should (equal '(r 1) (supersonic-tests--browse-at)))
-    (supersonic-browse-next)            ; within a section, back to its start first
-    (supersonic-browse-previous-section)
-    (should (equal '(r 1) (supersonic-tests--browse-at)))
-    (supersonic-browse-previous-section)
-    (should (equal '(t 1) (supersonic-tests--browse-at)))))
-
-(ert-deftest supersonic-tests-browse-numbering ()
-  "Track numbers are shown when sound, positions otherwise."
-  (require 'supersonic-browse)
-  (should (equal '(1 2 1 2) (supersonic-browse--numbering
-                             '((:track 1 :disc 1) (:track 2 :disc 1) (:track 1 :disc 2) (:track 2 :disc 2)))))
-  (should (equal '(1 2 3) (supersonic-browse--numbering '((:track 1) (:track 1) (:track 2)))))
-  (should (equal '(1 2) (supersonic-browse--numbering '((:track 5) (:title "no number"))))))
-
-(ert-deftest supersonic-tests-browse-buttons-and-links-act ()
-  "RET on a button or a \"See all\" link runs what it stands for."
-  (require 'supersonic-browse)
-  (let ((ran nil))
-    (with-temp-buffer
-      (supersonic-browse-mode)
-      (let ((inhibit-read-only t))
-        (insert (propertize "Surprise" 'supersonic-browse-focus t 'supersonic-browse-key '(button surprise)
-                            'supersonic-browse-item (list :action (lambda () (push 'surprise ran)))))
-        (insert "  ")
-        (insert (propertize "See all" 'supersonic-browse-focus t 'supersonic-browse-key '(more "See all" 2)
-                            'supersonic-browse-item (list :action (lambda () (push 'more ran))))))
-      (supersonic-browse--index-stops)
-      (cl-letf (((symbol-function 'supersonic-browse--paint) #'ignore))
-        (supersonic-browse-first)
-        (supersonic-browse-open)
-        (supersonic-browse-next)
-        (supersonic-browse-open)))
-    (should (equal '(more surprise) ran))))
-
-(ert-deftest supersonic-tests-browse-queue-page ()
-  "The queue page resolves each entry's track, marks the current one, and
-RET on a row plays that entry rather than starting a new queue."
-  (require 'supersonic-browse)
-  (let (played)
-    (supersonic-tests--with-backend
-     `((queue . ,(supersonic-tests--resolved
-                  '((:track-id "a" :track (:id "a" :title "Brought"))
-                    (:track-id "b" :current t))))
-       (live-p . ,(lambda () t))
-       (play-index . ,(lambda (index) (push index played))))
-     (supersonic-tests--with-provider
-         `((track . ,(lambda (id) (funcall (supersonic-tests--resolved (list :id id :title "Looked up"))))))
-       (let ((tracks (plist-get (supersonic-tests--resolve (supersonic-browse--load-content '(:kind queue)))
-                                :tracks)))
-         (should (equal '("Brought" "Looked up") (mapcar (lambda (track) (plist-get track :title)) tracks)))
-         (should (equal '(nil t) (mapcar (lambda (track) (plist-get track :queue-current)) tracks))))
-       (with-temp-buffer
-         (supersonic-browse-mode)
-         (setq supersonic-browse--page '(:kind queue))
-         (let ((inhibit-read-only t))
-           (insert (propertize "Song" 'supersonic-browse-focus t 'supersonic-browse-key '(track "b" 1)
-                               'supersonic-browse-index 1 'supersonic-browse-ids '("a" "b"))))
-         (goto-char (point-min))
-         (supersonic-browse-open))))
-    (should (equal '(1) played))))
 
 (ert-deftest supersonic-tests-lyrics-buffer-centres-lines ()
   "The lyrics buffer centres each line and its translation, which keep
@@ -9063,24 +8894,6 @@ unanswered for longer than the reply timeout, not on the first miss."
       (should (= 1 hooked))
       (should-not supersonic-mpv--first-miss))))
 
-(ert-deftest supersonic-tests-consult-candidates ()
-  "Search results become candidates grouped by kind, each carrying its
-item, kept apart even when they read the same."
-  (require 'supersonic-consult)
-  (require 'supersonic-browse)
-  (let ((candidates (supersonic-consult--candidates
-                     '(:artists ((:id "ar" :name "Band"))
-                       :albums ((:id "al" :name "Record" :artist "Band" :year 1999))
-                       :tracks ((:id "t1" :title "Intro" :artist "Band" :duration 65)
-                                (:id "t2" :title "Intro" :artist "Band" :duration 70))))))
-    (should (equal '("Artists" "Albums" "Songs" "Songs")
-                   (mapcar (lambda (c) (supersonic-consult--group c nil)) candidates)))
-    (should (equal '("ar" "al" "t1" "t2")
-                   (mapcar (lambda (c) (plist-get (cdr (supersonic-consult--item c)) :id)) candidates)))
-    (should-not (equal (nth 2 candidates) (nth 3 candidates)))
-    (should (string-search "1999" (supersonic-consult--annotate (nth 1 candidates))))
-    (should (string-search "1:05" (supersonic-consult--annotate (nth 2 candidates))))))
-
 (ert-deftest supersonic-tests-download-file-names ()
   "Songs are saved as Artist/Album (Year)/NN - Title, with what a file
 name cannot hold replaced, and their lyrics as LRC."
@@ -9098,36 +8911,10 @@ name cannot hold replaced, and their lyrics as LRC."
                  (supersonic-download--lrc '(:lines ((62500 . "Hello") (nil . "Plain"))))))
   (should (equal "\"a\\\"b\\\\c\"\n" (supersonic-download--config-string "a\"b\\c"))))
 
-(ert-deftest supersonic-tests-browse-album-list-loads-more ()
-  "Focus near the end of an album list loads the albums after it, adds
-those not shown yet, and stops once the list runs out."
-  (let ((albums (mapcar (lambda (i) (list :id (format "a%d" i))) (number-sequence 1 12)))
-        asked)
-    (supersonic-tests--with-browse-stops
-        (mapcar (lambda (i) (list (list 'album (format "a%d" i)) 1 1 0 i t)) (number-sequence 1 12))
-      (supersonic-tests--with-provider
-          `((album-list . ,(lambda (type count offset)
-                             (push (list type count offset) asked)
-                             (funcall (supersonic-tests--resolved '((:id "a12") (:id "a13") (:id "a14")))))))
-        (setq supersonic-browse--page '(:kind albums :type newest)
-              supersonic-browse--content (list :albums albums)
-              supersonic-browse--selected '(album "a12"))
-        (cl-letf (((symbol-function 'supersonic-browse--render) #'ignore))
-          (supersonic-browse--maybe-more)
-          (with-timeout (2) (while (eq supersonic-browse--more t) (accept-process-output nil 0.01)))
-          (should (equal (list (list 'newest supersonic-album-list-count 12)) asked))
-          (should (equal '("a13" "a14")
-                         (mapcar (lambda (a) (plist-get a :id))
-                                 (nthcdr 12 (plist-get supersonic-browse--content :albums)))))
-          (should (eq 'done supersonic-browse--more))
-          (supersonic-browse--maybe-more)
-          (should (= 1 (length asked))))))))
-
 (ert-deftest supersonic-tests-download-albums-are-listed-and-marked ()
   "A saved album's folder says which album it holds, so it is listed,
 marked in the library, and gone once deleted."
   (require 'supersonic-download)
-  (require 'supersonic-browse)
   (let* ((supersonic-download-directory (make-temp-file "supersonic-dl" t))
          (supersonic-download--albums 'unknown)
          (dir (expand-file-name "Band/Live (2001)/" supersonic-download-directory))
@@ -9139,30 +8926,12 @@ marked in the library, and gone once deleted."
           (write-region (prin1-to-string '(:id "al1" :name "Live" :artist "Band" :year 2001)) nil
                         (expand-file-name ".supersonic-album" dir))
           (should (equal '("al1") (mapcar (lambda (a) (plist-get a :id)) (supersonic-download-albums))))
-          (should (supersonic-browse--saved-p '(:id "al1" :name "Live")))
-          (should-not (supersonic-browse--saved-p '(:id "al2" :name "Other")))
+          (should (supersonic-download-album-p "al1"))
+          (should-not (supersonic-download-album-p "al2"))
           (supersonic-download-delete-album (car (supersonic-download-albums)))
           (should-not (supersonic-download-albums))
           (should-not (file-exists-p (expand-file-name "Band" supersonic-download-directory))))
       (delete-directory supersonic-download-directory t))))
-
-(ert-deftest supersonic-tests-browse-hint-line ()
-  "Hints show the keys bound, most important first while they fit,
-always ending with the last one."
-  (require 'supersonic-browse)
-  (let ((map (make-sparse-keymap))
-        (hints '((supersonic-browse-open . "open")
-                 ((supersonic-browse-playlist-move-up supersonic-browse-playlist-move-down) . "move")
-                 (supersonic-browse-reload . "unbound") (supersonic-cheatsheet . "all keys"))))
-    (define-key map (kbd "RET") #'supersonic-browse-open)
-    (define-key map (kbd "M-p") #'supersonic-browse-playlist-move-up)
-    (define-key map (kbd "M-n") #'supersonic-browse-playlist-move-down)
-    (define-key map (kbd "?") #'supersonic-cheatsheet)
-    (should (equal "RET open   M-p/M-n move   ? all keys"
-                   (substring-no-properties (supersonic-browse-hint-line hints map 1000))))
-    ;; Batch measures in columns: room for "RET open   " and "? all keys" only.
-    (should (equal "RET open   ? all keys"
-                   (substring-no-properties (supersonic-browse-hint-line hints map 25))))))
 
 (ert-deftest supersonic-tests-local-album-in-a-directory ()
   "A saved album's folder finds the local album of the files in it."
@@ -9180,44 +8949,6 @@ always ending with the last one."
       (should-not (plist-get (aio-wait-for (supersonic-local-album-in "/music/Band/Live (2001)")) :tracks))
       (should-not (aio-wait-for (supersonic-local-album-in "/music/Nobody/"))))))
 
-(ert-deftest supersonic-tests-browse-flash-on-the-item ()
-  "An action's word shows in place of a tile's second line, or of a
-track row's duration."
-  (require 'supersonic-browse)
-  (with-temp-buffer
-    (let ((tile '(album "a" 1)) (row '(track "t" 0)))
-      (insert (propertize "*" 'supersonic-browse-key tile) "\n"
-              (propertize "Title" 'supersonic-browse-key tile 'face 'supersonic-browse-tile-title) "\n"
-              (propertize "Band" 'supersonic-browse-key tile 'face 'supersonic-browse-tile-subtitle) "\n"
-              (propertize (concat "Song" (propertize "3:00" 'face 'supersonic-browse-track-number))
-                          'supersonic-browse-key row))
-      (cl-letf (((symbol-function 'run-at-time) #'ignore))
-        (supersonic-browse--flash (current-buffer) tile "Queued")
-        (supersonic-browse--flash (current-buffer) row "Saving"))
-      (should (equal '("Band" "3:00")
-                     (mapcar (lambda (o) (buffer-substring (overlay-start o) (overlay-end o)))
-                             (sort (overlays-in (point-min) (point-max))
-                                   (lambda (a b) (< (overlay-start a) (overlay-start b))))))))))
-
-(ert-deftest supersonic-tests-browse-visiting-the-same-page-again ()
-  "Visiting the page shown brings it up to date instead of stacking it
-on the way back, wherever focus is; another page is stacked."
-  (require 'supersonic-browse)
-  (let ((refreshed 0))
-    (cl-letf (((symbol-function 'supersonic-browse--load) (lambda (_) nil))
-              ((symbol-function 'supersonic-browse--refresh) (lambda (&rest _) (cl-incf refreshed)))
-              ((symbol-function 'pop-to-buffer-same-window) #'ignore))
-      (unwind-protect
-          (with-current-buffer (supersonic-browse--buffer)
-            (setq supersonic-browse--page nil supersonic-browse--back nil)
-            (supersonic-browse-visit '(:kind queue))
-            (supersonic-browse-visit '(:kind queue :selected (track "a" 1)))
-            (should (= 1 refreshed))
-            (should-not supersonic-browse--back)
-            (supersonic-browse-visit '(:kind album :id "x"))
-            (should (= 1 (length supersonic-browse--back))))
-        (kill-buffer supersonic-browse-buffer-name)))))
-
 (ert-deftest supersonic-tests-provider-album-list-passes-an-offset ()
   "An offset reaches the provider only when one is asked for."
   (let (calls)
@@ -9226,28 +8957,6 @@ on the way back, wherever focus is; another page is stacked."
       (aio-wait-for (supersonic-provider-album-list 'newest 10))
       (aio-wait-for (supersonic-provider-album-list 'newest 10 20)))
     (should (equal '((newest 10) (newest 10 20)) (nreverse calls)))))
-
-(ert-deftest supersonic-tests-browse-row-start-and-end ()
-  "Line start and end go to the first and last item of the line, then of
-the section; the same for lines of one item, like tracks."
-  (supersonic-tests--with-browse-stops
-      '(((t 1) 1 1 0 0) ((t 2) 1 1 0 1 same-line) ((t 3) 1 1 0 2 same-line)
-        ((t 4) 1 1 1 0) ((t 5) 1 1 1 1 same-line)
-        ((r 1) 2 nil nil nil) ((r 2) 2 nil nil nil) ((r 3) 2 nil nil nil))
-    (supersonic-browse--goto-index 1)
-    (supersonic-browse-row-end)
-    (should (equal '(t 3) (supersonic-tests--browse-at)))
-    (supersonic-browse-row-end)         ; at the line's end: the section's
-    (should (equal '(t 5) (supersonic-tests--browse-at)))
-    (supersonic-browse-row-start)
-    (should (equal '(t 4) (supersonic-tests--browse-at)))
-    (supersonic-browse-row-start)
-    (should (equal '(t 1) (supersonic-tests--browse-at)))
-    (supersonic-browse--goto-index 6)
-    (supersonic-browse-row-end)         ; a track: its line is just itself
-    (should (equal '(r 3) (supersonic-tests--browse-at)))
-    (supersonic-browse-row-start)
-    (should (equal '(r 1) (supersonic-tests--browse-at)))))
 
 (ert-deftest supersonic-tests-mpris-metadata-carries-art ()
   "Metadata hands the cached cover out as a file URL, once there is one."
@@ -9322,144 +9031,6 @@ trashed, with tracks no longer found left out."
               (aio-wait-for (supersonic-local--delete-playlist id))
               (should-not (aio-wait-for (supersonic-local--playlists))))))
       (delete-directory dir t))))
-
-(defmacro supersonic-tests--with-player-page (state &rest body)
-  "Run BODY in a now-playing page laid out for STATE, without a display.
-Art, the progress timer and lyrics are left out; the page's hooks are
-kept from leaking into other tests."
-  (declare (indent 1))
-  `(let ((supersonic-playback-track-change-hook nil)
-         (supersonic-playback-state-change-hook nil)
-         (supersonic-playback-queue-change-hook nil)
-         (supersonic-playback-position-change-hook nil)
-         (supersonic-lyrics-line-change-hook nil))
-     (require 'supersonic-player)
-     (with-temp-buffer
-       (supersonic-player-mode)
-       (setq supersonic-player--state ,state)
-       ;; A batch session's window is too narrow for anything to fit.
-       (cl-letf (((symbol-function 'supersonic-browse--available-width) (lambda () 800))
-                 ((symbol-function 'supersonic-player--fetch-art) #'ignore)
-                 ((symbol-function 'supersonic-player--update-timer) #'ignore)
-                 ((symbol-function 'supersonic-player--lyrics-lines) (lambda () '("sung" "gesungen" "next"))))
-         (supersonic-player--render-here)
-         ,@body))))
-
-(defun supersonic-tests--player-keys ()
-  "Return the item keys of the page's stops, in order."
-  (mapcar (lambda (pos) (get-text-property pos 'supersonic-browse-key)) supersonic-browse--stops))
-
-(ert-deftest supersonic-tests-player-page-lays-out-a-track ()
-  "The page shows the track, links to its artist and album, the controls
-in their order, the lyrics and what plays next, with play/pause in focus."
-  (supersonic-tests--with-player-page
-      '(:track-id "t1" :track (:id "t1" :title "Song" :artist "Band" :album "Record" :duration 200)
-        :paused t :upcoming ((3 . (:id "t2" :title "Later" :artist "Band" :duration 61))))
-    (let ((text (buffer-substring-no-properties (point-min) (point-max))))
-      (dolist (expected '("Paused" "Song" "Band" "Record" "sung" "gesungen" "next" "Up next" "Later" "1:01"))
-        (should (string-search expected text))))
-    (should (equal '((button artist) (button album)
-                     (button like) (button shuffle) (button prev) (button toggle)
-                     (button next) (button repeat) (button radio))
-                   (seq-take (supersonic-tests--player-keys) 9)))
-    (should (member '(button (upcoming 3)) (supersonic-tests--player-keys)))
-    (should (equal '(button toggle) (get-text-property (point) 'supersonic-browse-key)))
-    (should (get-text-property (text-property-any (point-min) (point-max) 'supersonic-player-lyrics t)
-                               'supersonic-player-lyrics))))
-
-(ert-deftest supersonic-tests-player-page-with-nothing-playing ()
-  "Without a track the page offers a surprise and the library instead."
-  (supersonic-tests--with-player-page nil
-    (should (string-search "Nothing playing" (buffer-string)))
-    (should (equal '((button supersonic-browse-surprise) (button supersonic-browse))
-                   (supersonic-tests--player-keys)))))
-
-(ert-deftest supersonic-tests-player-controls-run-commands ()
-  "Every control runs a command, so RET on it can call it interactively."
-  (require 'supersonic-player)
-  (require 'supersonic-radio)
-  (dolist (name '(like shuffle prev toggle next repeat radio minus plus))
-    (should (commandp (supersonic-player--control-action name)))))
-
-(ert-deftest supersonic-tests-player-seek-click-fraction ()
-  "A click on the progress bar seeks to its fraction of the bar, leaving
-out the padding at either end and clamping clicks on the padding."
-  (require 'supersonic-player)
-  (let (fractions)
-    (cl-letf (((symbol-function 'supersonic-playback-seek-fraction) (lambda (f) (push f fractions))))
-      (dolist (x '(110 10 0 220))
-        ;; A click X pixels into an image 220 wide.
-        (supersonic-player-seek-click
-         `(mouse-1 (nil 1 (0 . 0) 0 nil 1 (0 . 0) nil (,x . 0) (220 . 20))))))
-    (should (equal '(0.5 0.0 0.0 1.0) (nreverse fractions)))))
-
-(ert-deftest supersonic-tests-player-trims-up-next-to-fit ()
-  "Up next keeps the rows the window shows whole, and goes when none
-fits, leaving the rest of the page -- the controls point is on -- as
-it was."
-  (require 'supersonic-player)
-  (with-temp-buffer
-    (insert (propertize "*" 'supersonic-browse-focus t 'supersonic-browse-key '(button toggle)) "\n"
-            (propertize "\nUp next\n" 'supersonic-player-upcoming t)
-            (propertize "row one" 'supersonic-browse-list-row t) "\n"
-            (propertize "row two" 'supersonic-browse-list-row t) "\n")
-    (goto-char (point-min))
-    (let ((fits 0))
-      (cl-letf (((symbol-function 'window-body-height) (lambda (&rest _) 100))
-                ((symbol-function 'window-text-pixel-size)
-                 (lambda (_window _from to) (cons 0 (if (<= to fits) 50 200)))))
-        (setq fits (save-excursion (goto-char (point-min)) (search-forward "row one") (point)))
-        (supersonic-player--trim-upcoming 'window)
-        (should (string-search "row one" (buffer-string)))
-        (should-not (string-search "row two" (buffer-string)))
-        (setq fits 0)
-        (supersonic-player--trim-upcoming 'window)
-        (should (equal "*\n\n" (buffer-substring-no-properties (point-min) (point-max))))
-        (should (= (point) (point-min)))))))
-
-(ert-deftest supersonic-tests-player-lyrics-redraw-in-place ()
-  "New lyrics replace the old ones where they are, wherever point is."
-  (require 'supersonic-player)
-  (with-temp-buffer
-    (rename-buffer supersonic-player-buffer-name t)
-    (let ((buff (current-buffer))
-          (lines '("one" nil "two")))
-      (cl-letf (((symbol-function 'supersonic-player--lyrics-lines) (lambda () lines))
-                ((symbol-function 'supersonic-player--centered-text) (lambda (text) (insert text "\n")))
-                ((symbol-function 'supersonic-browse--index-stops) #'ignore)
-                ((symbol-function 'get-buffer) (lambda (_) buff)))
-        (insert "controls\n")
-        (supersonic-player--insert-lyrics)
-        (insert "after\n")
-        ;; Shown in a window whose point is on the controls, as when one
-        ;; of them has focus.
-        (set-window-buffer (selected-window) buff)
-        (set-window-point (selected-window) 3)
-        (goto-char 3)
-        (setq lines '("ONE" "uno" "TWO"))
-        (save-selected-window
-          (select-window (minibuffer-window))
-          (supersonic-player--lyrics-changed))
-        (should (equal "controls\nONE\nuno\nTWO\nafter\n" (buffer-substring-no-properties (point-min) (point-max))))))))
-
-(ert-deftest supersonic-tests-cheatsheet-reads-the-keymaps ()
-  "The cheatsheet shows the keys actually bound: the shortest first,
-remapped motions under the keys of what they replace, the first bound
-of alternatives, and nothing for what has no key."
-  (require 'supersonic-browse)
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "M-<left>") #'supersonic-browse-back)
-    (define-key map (kbd "l") #'supersonic-browse-back)
-    (define-key map [remap next-line] #'supersonic-browse-down)
-    (define-key map (kbd "C-n") #'next-line)
-    (define-key map (kbd "=") #'supersonic-volume-up)
-    (should (equal '("l" "M-<left>") (supersonic-cheatsheet--keys 'supersonic-browse-back (list map))))
-    (should (equal '("C-n") (supersonic-cheatsheet--keys 'supersonic-browse-down (list map))))
-    (should (equal '((("l") . "back") (("=") . "louder"))
-                   (supersonic-cheatsheet--entries
-                    '("S" all ("back" supersonic-browse-back) ("louder" (:or supersonic-player-volume-up supersonic-volume-up))
-                      ("unbound" supersonic-browse-reload))
-                    (list map) "5")))))
 
 (ert-deftest supersonic-tests-mpv-restore-is-silent ()
   "Restoring pauses mpv and sets the start position before loading
@@ -9614,41 +9185,12 @@ played most, best first and without repeats."
                    (mapcar (lambda (x) (plist-get x :id))
                            (aio-wait-for (supersonic-subsonic--top-tracks '(:id "ar1" :name "Tally Hall") 5)))))))
 
-(ert-deftest supersonic-tests-browse-initials-of-signs ()
-  "A name of no letters or digits, or none at all, gets a note, not an error."
-  (require 'supersonic-browse)
-  (should (equal "♪" (supersonic-browse--initials "?")))
-  (should (equal "♪" (supersonic-browse--initials "")))
-  (should (equal "♪" (supersonic-browse--initials nil))))
-
 (ert-deftest supersonic-tests-mpv-get-property-gives-up ()
   "A property mpv never answers for resolves to nil after the timeout."
   (let ((supersonic-mpv-reply-timeout 0.1)
         (supersonic-mpv--pending-requests (make-hash-table)))
     (cl-letf (((symbol-function 'supersonic-mpv-command-with-callback) (lambda (&rest _) t)))
       (should-not (aio-wait-for (supersonic-mpv-get-property "pause"))))))
-
-(ert-deftest supersonic-tests-browse-buttons-run-commands-interactively ()
-  "A button whose action is a command runs it as a key would, asking what it asks."
-  (require 'supersonic-browse)
-  (let ((got nil))
-    (with-temp-buffer
-      (supersonic-browse-mode)
-      (let ((inhibit-read-only t)
-            (command (lambda (x) (interactive (list 'asked)) (setq got x))))
-        (insert (propertize "R" 'supersonic-browse-focus t 'supersonic-browse-key '(button radio)
-                            'supersonic-browse-item (list :action command))))
-      (goto-char (point-min))
-      (supersonic-browse-open))
-    (should (eq 'asked got))))
-
-(ert-deftest supersonic-tests-browse-wrap ()
-  "Names wrap at word boundaries into a few lines, the last cut if need be."
-  (require 'supersonic-browse)
-  (should (equal '("Psychedelic" "Rock") (supersonic-browse--wrap "Psychedelic Rock" 12 3)))
-  (should (equal '("Rock") (supersonic-browse--wrap "Rock" 12 3)))
-  (should (equal '("a b" "c d" "e f…") (supersonic-browse--wrap "a b c d e f g h" 4 3)))
-  (should (equal '("Supercalifr…") (supersonic-browse--wrap "Supercalifragilistic" 12 3))))
 
 (ert-deftest supersonic-tests-local-genres ()
   "Local genres count their albums and songs, most albums first."

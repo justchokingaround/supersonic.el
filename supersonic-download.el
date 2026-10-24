@@ -29,7 +29,7 @@
 ;; without the server, and is rescanned once a download is done.
 ;;
 ;; Each album folder keeps what the server knows of the album in a
-;; .supersonic-album file, so that `supersonic-browse-downloads' can
+;; .supersonic-album file, so that `supersonic-download-albums' can
 ;; list what was saved, and the library mark it.
 ;;
 ;; Files are fetched one after another by curl, which is handed its

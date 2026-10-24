@@ -368,7 +368,7 @@ TRACK is its track plist.  Answers from the cache unless REFRESH."
 ;;;
 
 (defvar supersonic-lyrics-follow-mode)
-(declare-function supersonic-browse-hint-line "supersonic-browse")
+(declare-function tile-hint-line "tile")
 (defvar supersonic-lyrics-mode-map)
 
 (defvar supersonic-lyrics-line nil
@@ -828,13 +828,14 @@ stretch of the same properties."
                                                   (if supersonic-lyrics-show-translation "" " (hidden)")))
                                          (t "")))
                            'face '(shadow (:height 0.85))))))
-    (when (and track (require 'supersonic-browse nil t))
+    ;; Key hints as the tile pages show them, when tile is there.
+    (when (and track (require 'tile nil t))
       (insert (supersonic-lyrics--centered
-               (supersonic-browse-hint-line
+               (tile-hint-line
                 '((supersonic-lyrics-seek-to-line . "play from here") (supersonic-lyrics-toggle-follow . "follow")
                   ((supersonic-lyrics-later supersonic-lyrics-earlier) . "sync")
                   (supersonic-lyrics-toggle-translation . "translation") (quit-window . "close"))
-                supersonic-lyrics-mode-map (window-body-width nil t)))))
+                (window-body-width nil t)))))
     (insert "\n")
     (pcase supersonic-lyrics--status
       ('nil (insert (supersonic-lyrics--centered (propertize "Nothing playing." 'face 'shadow))))

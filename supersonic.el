@@ -57,17 +57,6 @@
 
 (declare-function supersonic-lyrics "supersonic-lyrics")
 (declare-function supersonic-local-toggle "supersonic-local")
-(declare-function supersonic-browse "supersonic-browse")
-(declare-function supersonic-browse-artists "supersonic-browse")
-(declare-function supersonic-browse-album-list "supersonic-browse")
-(declare-function supersonic-browse-search "supersonic-browse")
-(declare-function supersonic-browse-playlists "supersonic-browse")
-(declare-function supersonic-cheatsheet "supersonic-browse")
-(declare-function supersonic-browse-genres "supersonic-browse")
-(declare-function supersonic-browse-queue "supersonic-browse")
-(declare-function supersonic-browse-home "supersonic-browse")
-(declare-function supersonic-browse-downloads "supersonic-browse")
-(declare-function supersonic-save-queue-as-playlist "supersonic-browse")
 (declare-function supersonic-lyrics-toggle-echo-area "supersonic-lyrics")
 (declare-function supersonic-lyrics-toggle-translation "supersonic-lyrics")
 
@@ -201,16 +190,8 @@ binds itself afterwards win."
     (define-key map (kbd "f") #'supersonic-seek-forward)
     (define-key map (kbd "b") #'supersonic-seek-back)
     (define-key map (kbd "o") #'supersonic-show-now-playing)
-    (define-key map (kbd "q") #'supersonic-browse-queue)
-    (define-key map (kbd "d") #'supersonic-browse-downloads)
     (define-key map (kbd "s") #'supersonic-search-read)
     (define-key map (kbd "S") #'supersonic-search)
-    (define-key map (kbd "h") #'supersonic-browse-home)
-    (define-key map (kbd "a") #'supersonic-browse-artists)
-    (define-key map (kbd "r") (lambda () (interactive) (supersonic-browse-album-list 'random)))
-    (define-key map (kbd "e") (lambda () (interactive) (supersonic-browse-album-list 'recent)))
-    (define-key map (kbd "w") (lambda () (interactive) (supersonic-browse-album-list 'newest)))
-    (define-key map (kbd "/") #'supersonic-browse-search)
     (define-key map (kbd "P") #'supersonic-podcasts)
     (define-key map (kbd "k") #'supersonic-playback-switch-backend)
     (define-key map (kbd "m") #'supersonic)
@@ -222,10 +203,6 @@ binds itself afterwards win."
     (define-key map (kbd "C") #'supersonic-clear-queue)
     (define-key map (kbd "l") #'supersonic-lyrics)
     (define-key map (kbd "O") #'supersonic-local-toggle)
-    (define-key map (kbd "W") #'supersonic-save-queue-as-playlist)
-    (define-key map (kbd "L") #'supersonic-browse-playlists)
-    (define-key map (kbd "?") #'supersonic-cheatsheet)
-    (define-key map (kbd "g") #'supersonic-browse-genres)
     (define-key map (kbd "t") #'supersonic-lyrics-toggle-echo-area)
     (define-key map (kbd "T") #'supersonic-lyrics-toggle-translation)
     map)
@@ -576,7 +553,6 @@ entry is matched with `eq', as the same track may be queued twice."
     (define-key map (kbd "M-<up>") #'supersonic-queue-move-up)
     (define-key map (kbd "M-<down>") #'supersonic-queue-move-down)
     (define-key map (kbd "C") #'supersonic-clear-queue)
-    (define-key map (kbd "W") #'supersonic-save-queue-as-playlist)
     map)
   "Keymap for `supersonic-queue-mode'.")
 
@@ -594,10 +570,9 @@ Mirrors the active backend's play queue, refreshed whenever it may have changed.
 
 ;;;###autoload
 (defun supersonic-show-queue ()
-  "Show the play queue: the library browser's queue page.
-The list of `supersonic-queue-mode' remains, as `supersonic-queue-list'."
+  "Show the play queue, as `supersonic-queue-list' lists it."
   (interactive)
-  (supersonic-browse-queue))
+  (supersonic-queue-list))
 
 (defun supersonic-queue-list ()
   "Open a buffer listing the active backend's current play queue."
@@ -2156,7 +2131,6 @@ provider is missing."
 (transient-define-prefix
  supersonic () "Help transient for supersonic."
  [["Supersonic"
-   ("h" "Library (browser)" supersonic-browse)
    ("a" "Artists" supersonic-artists :if supersonic--offer-artists-p)
    ("e" "Recent Albums" supersonic-recent-albums :if supersonic--offer-album-list-p)
    ("r" "Random Albums" supersonic-random-albums :if supersonic--offer-album-list-p)
