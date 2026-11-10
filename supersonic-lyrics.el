@@ -647,8 +647,16 @@ cache."
                        supersonic-lyrics--lyrics (supersonic-lyrics--with-user-translation lyrics track)
                        supersonic-lyrics--status (if lyrics 'found 'none))
                  (supersonic-lyrics--refresh-views)
+                 ;; A translate function failing at once (gptel with
+                 ;; a backend not signed in raises from the request
+                 ;; itself) must not skip the resync below: that is
+                 ;; what starts the tick timer, so the lyrics would
+                 ;; stay still until a pause and resume resynced.
                  (when (and supersonic-lyrics-auto-translate supersonic-lyrics-translate-function)
-                   (supersonic-lyrics--machine-translate nil)))))))
+                   (condition-case err
+                       (supersonic-lyrics--machine-translate nil)
+                     (error (supersonic--log "lyrics translation failed: %s"
+                                             (error-message-string err))))))))))
        (aio-await (supersonic-lyrics--resync)))
    (error
     (setq supersonic-lyrics--status 'none)
