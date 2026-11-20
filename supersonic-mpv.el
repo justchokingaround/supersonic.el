@@ -233,6 +233,7 @@ set before anything loads, so not a sound is played."
     (supersonic-mpv--load
      ids '("replace" . "append")
      (lambda ()
+       (setq supersonic-mpv--shuffled nil)
        (supersonic-mpv-command "playlist-play-index" index)
        ;; `start' would apply to every later track too.
        (run-at-time 5 nil (lambda () (supersonic-mpv-command "set_property" "start" "none")))
@@ -242,16 +243,41 @@ set before anything loads, so not a sound is played."
        (supersonic-mpv-command "set_property" "start" (format "+%s" (max 0 (or position 0)))))))
   nil)
 
+(defun supersonic-mpv--started ()
+  "Play the queue just loaded in place of the old one, and say so.
+Unpauses, since `loadfile ... replace' leaves mpv's `pause' as it was.
+The new queue is in the order it was given, not shuffled: left on,
+`supersonic-mpv--shuffled' would make the next shuffle toggle only
+\"unshuffle\" it, doing nothing."
+  (setq supersonic-mpv--shuffled nil)
+  (supersonic-mpv-command "set_property" "pause" :json-false)
+  (run-hooks 'supersonic-playback-track-change-hook))
+
 (defun supersonic-mpv-start (ids)
   "Replace the current mpv queue with IDS and start playing.
-Returns before they reach mpv.  Unpauses, since `loadfile ... replace'
-leaves mpv's `pause' as it was."
+Returns before they reach mpv."
   (when ids
-    (supersonic-mpv--load
-     ids '("replace" . "append")
-     (lambda ()
-       (supersonic-mpv-command "set_property" "pause" :json-false)
-       (run-hooks 'supersonic-playback-track-change-hook))))
+    (supersonic-mpv--load ids '("replace" . "append") #'supersonic-mpv--started))
+  nil)
+
+(defun supersonic-mpv-start-at (ids index)
+  "Replace the current mpv queue with IDS and play from entry INDEX.
+The entries from INDEX on are loaded first, so INDEX's is the one
+`replace' starts, and those before are appended and moved to the
+front.  Loading IDS in order and then jumping to INDEX would start the
+first entry for a moment, and scrobble it as playing.  Returns before
+they reach mpv."
+  (if (or (null ids) (<= index 0) (>= index (length ids)))
+      (supersonic-mpv-start ids)
+    (let ((total (length ids)))
+      (supersonic-mpv--load
+       (append (nthcdr index ids) (seq-take ids index)) '("replace" . "append")
+       (lambda ()
+         ;; Each moves from the end to its place; those still to move
+         ;; stay where they were, after everything moved past them.
+         (dotimes (k index)
+           (supersonic-mpv-command "playlist-move" (+ (- total index) k) k))
+         (supersonic-mpv--started)))))
   nil)
 
 ;;;###autoload
@@ -488,6 +514,7 @@ Remembered even while mpv is not running, for the next one started."
 (supersonic-playback-register-backend
  'mpv
  '((start . supersonic-mpv-start)
+   (start-at . supersonic-mpv-start-at)
    (enqueue . supersonic-mpv-enqueue)
    (toggle-play . supersonic-mpv-toggle-play)
    (next . supersonic-mpv-next)

@@ -56,11 +56,14 @@ between 0.0 and 1.0; `status' takes one of
 
 (defconst supersonic-playback-operations
   (append supersonic-playback-core-operations
-          '(play-index remove move clear shuffle repeat volume restore))
+          '(start-at play-index remove move clear shuffle repeat volume restore))
   "The playback operations a backend can implement.
 Those of `supersonic-playback-core-operations', plus the queue editing
 and playback mode ones, which a backend is more likely to leave out:
 
+- `start-at' takes track IDS and a 0-based INDEX into them, makes IDS
+  the queue and plays from the entry at INDEX, without first playing
+  any of those before it.
 - `play-index' takes a 0-based position in the queue and plays it.
 - `remove' takes a position and drops that entry from the queue.
 - `move' takes a position FROM and a position TO and moves the entry
@@ -97,8 +100,10 @@ Only that: a change in the identity of what is playing runs
 (defvar supersonic-playback-queue-change-hook nil
   "Hook run whenever the play queue's entries may have changed.
 Only while what is playing stays the same, e.g. tracks enqueued behind
-it; otherwise `supersonic-playback-track-change-hook' runs instead.  A
-consumer pulls the queue via `supersonic-playback-queue'.")
+it; otherwise `supersonic-playback-track-change-hook' runs instead.
+Also run when the repeat mode changed, which changes what plays after
+the current track.  A consumer pulls the queue via
+`supersonic-playback-queue'.")
 
 (defvar supersonic-playback-position-change-hook nil
   "Hook run whenever the playback position jumped rather than crept on.
@@ -261,9 +266,21 @@ declining leaves everything as it was."
                         supersonic-provider supersonic-playback-backend))
           (intern answer)))))))
 
-(defun supersonic-playback-start (ids)
-  "Replace the play queue with IDS and start playing immediately."
-  (supersonic-playback--call 'start ids))
+(defun supersonic-playback--implements-p (operation)
+  "Return non-nil if the active backend implements OPERATION."
+  (and (alist-get operation (gethash supersonic-playback-backend supersonic-playback--backends)) t))
+
+(defun supersonic-playback-start (ids &optional index)
+  "Replace the play queue with IDS and start playing immediately.
+From the entry at 0-based INDEX, if given: the ones before it stay in
+the queue, to go back to and, with the queue on repeat, to come round
+to again -- a playlist played from its fifth song still loops all of
+it.  A backend without `start-at' gets only the entries from INDEX on."
+  (let ((index (if (and index ids) (max 0 (min index (1- (length ids)))) 0)))
+    (cond
+     ((zerop index) (supersonic-playback--call 'start ids))
+     ((supersonic-playback--implements-p 'start-at) (supersonic-playback--call 'start-at ids index))
+     (t (supersonic-playback--call 'start (nthcdr index ids))))))
 
 (defun supersonic-playback-enqueue (ids)
   "Append IDS to the end of the play queue.
@@ -430,8 +447,11 @@ Interactively SECONDS is the numeric prefix argument."
   (supersonic-playback--call 'shuffle flag))
 
 (defun supersonic-playback-repeat (mode)
-  "Set the repeat MODE: nil, `queue' or `track'."
-  (supersonic-playback--call 'repeat mode))
+  "Set the repeat MODE: nil, `queue' or `track'.
+Runs `supersonic-playback-queue-change-hook': what comes after the
+current track is not the same with the queue on repeat."
+  (supersonic-playback--call 'repeat mode)
+  (run-hooks 'supersonic-playback-queue-change-hook))
 
 (defun supersonic-playback-volume (delta)
   "Change the volume by DELTA percent."
@@ -440,9 +460,9 @@ Interactively SECONDS is the numeric prefix argument."
 (defun supersonic-playback-restore (ids index position)
   "Make IDS the queue, paused at entry INDEX, POSITION seconds in.
 A backend without `restore' plays from that entry instead."
-  (if (alist-get 'restore (gethash supersonic-playback-backend supersonic-playback--backends))
+  (if (supersonic-playback--implements-p 'restore)
       (supersonic-playback--call 'restore ids index position)
-    (supersonic-playback-start (nthcdr index ids))))
+    (supersonic-playback-start ids index)))
 
 (defun supersonic-playback--status-now (key)
   "Return the active backend's current KEY, waiting for it."

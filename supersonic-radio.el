@@ -67,14 +67,18 @@ first, then random ones of SEED's genre, then random ones."
 
 (aio-defun
  supersonic-radio--extend ()
- "Add tracks after the queue's last one, if it is the one playing."
+ "Add tracks after the queue's last one, if it is the one playing.
+Not while the queue or the track is on repeat: then the queue never
+runs out, and what was asked for is the same songs again -- a playlist
+on repeat came round to strangers instead of to its first song."
  (when (and (not supersonic-radio--extending) (supersonic-playback-live-p))
    (setq supersonic-radio--extending t)
    (unwind-protect
        (condition-case err
            (let* ((queue (aio-await (supersonic-playback-queue)))
-                  (current (seq-position queue t (lambda (entry _) (plist-get entry :current)))))
-             (when (and current (= current (1- (length queue))))
+                  (current (seq-position queue t (lambda (entry _) (plist-get entry :current))))
+                  (repeat (aio-await (supersonic-playback-status 'repeat))))
+             (when (and current (not repeat) (= current (1- (length queue))))
                (let* ((seed (aio-await (supersonic-provider-track (plist-get (nth current queue) :track-id))))
                       (ids (aio-await (supersonic-radio--more
                                        seed (mapcar (lambda (entry) (plist-get entry :track-id)) queue)
@@ -91,7 +95,8 @@ first, then random ones of SEED's genre, then random ones."
 
 ;;;###autoload
 (define-minor-mode supersonic-autoplay-mode
-  "When the last track of the queue starts, add tracks like it after it."
+  "When the last track of the queue starts, add tracks like it after it.
+Not with repeat on: the queue then comes round to its start instead."
   :global t
   :group 'supersonic
   (if supersonic-autoplay-mode

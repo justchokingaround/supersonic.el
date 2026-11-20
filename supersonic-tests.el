@@ -9054,6 +9054,75 @@ anything, then jumps to the entry playing."
                      ("playlist-play-index" 1))
                    (nreverse commands)))))
 
+;; Started from INDEX, the whole list is queued: a playlist played from
+;; its fifth song still loops all of it on repeat.
+(ert-deftest supersonic-tests-playback-start-from-an-index ()
+  "With an INDEX, `supersonic-playback-start' hands a backend with
+`start-at' the whole list; one without gets the entries from INDEX on;
+an INDEX of 0, or none, is a plain start, and one past the end is
+clamped to the last entry."
+  (let ((calls nil))
+    (supersonic-tests--with-backend `((start . ,(lambda (ids) (push (cons 'start ids) calls)))
+                                      (start-at . ,(lambda (ids index) (push (list 'start-at ids index) calls))))
+      (supersonic-playback-start '("a" "b" "c") 1)
+      (supersonic-playback-start '("a" "b" "c") 0)
+      (supersonic-playback-start '("a" "b" "c"))
+      (supersonic-playback-start '("a" "b" "c") 9))
+    (supersonic-tests--with-backend `((start . ,(lambda (ids) (push (cons 'start ids) calls))))
+      (supersonic-playback-start '("a" "b" "c") 1))
+    (should (equal '((start-at ("a" "b" "c") 1) (start "a" "b" "c") (start "a" "b" "c")
+                     (start-at ("a" "b" "c") 2) (start "b" "c"))
+                   (nreverse calls)))))
+
+(ert-deftest supersonic-tests-playback-repeat-reports-a-queue-change ()
+  "Changing the repeat mode runs the queue change hook: what plays after
+the current track is not the same with the queue on repeat."
+  (let ((ran nil))
+    (supersonic-tests--with-backend `((start . ,#'ignore) (repeat . ,#'ignore))
+      (let ((supersonic-playback-queue-change-hook (list (lambda () (setq ran t)))))
+        (supersonic-playback-repeat 'queue)))
+    (should ran)))
+
+(ert-deftest supersonic-tests-mpv-start-at-plays-no-other-entry ()
+  "mpv's `start-at' loads the entries from INDEX first, so `replace'
+starts INDEX's, then moves those before it to the front, unpauses, and
+forgets an earlier shuffle."
+  (let ((commands nil)
+        (supersonic-mpv--shuffled t))
+    (cl-letf (((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (push args commands) t))
+              ((symbol-function 'supersonic-mpv-ensure-running) #'ignore)
+              ((symbol-function 'supersonic-mpv--stream-urls)
+               (aio-lambda (ids) (mapcar (lambda (id) (concat "url-" id)) ids)))
+              (supersonic-mpv--pending-load nil)
+              (supersonic--playlist (make-hash-table))
+              (supersonic-mpv--entry-counter 0)
+              (supersonic-playback-track-change-hook nil))
+      (supersonic-mpv-start-at '("a" "b" "c" "d") 2)
+      (aio-wait-for supersonic-mpv--pending-load))
+    (should (equal '(("loadfile" "url-c" "replace") ("loadfile" "url-d" "append")
+                     ("loadfile" "url-a" "append") ("loadfile" "url-b" "append")
+                     ("playlist-move" 2 0) ("playlist-move" 3 1)
+                     ("set_property" "pause" :json-false))
+                   (nreverse commands)))
+    (should-not supersonic-mpv--shuffled)))
+
+;; A playlist on repeat comes round to its first song, not to autoplay's.
+(ert-deftest supersonic-tests-autoplay-leaves-a-repeating-queue-alone ()
+  "Autoplay extends a queue whose last track plays only with repeat off."
+  (dolist (repeat '(nil queue track))
+    (let ((enqueued nil)
+          (supersonic-radio--extending nil))
+      (supersonic-tests--with-backend
+          `((start . ,#'ignore)
+            (live-p . ,(lambda () t))
+            (enqueue . ,(lambda (ids) (setq enqueued ids)))
+            (queue . ,(supersonic-tests--resolved '((:track-id "a") (:track-id "b" :current t))))
+            (status . ,(lambda (key) (funcall (supersonic-tests--resolved (and (eq key 'repeat) repeat))))))
+        (cl-letf (((symbol-function 'supersonic-provider-track) (supersonic-tests--resolved '(:id "b")))
+                  ((symbol-function 'supersonic-radio--more) (supersonic-tests--resolved '("c"))))
+          (aio-wait-for (supersonic-radio--extend))))
+      (should (equal enqueued (and (not repeat) '("c")))))))
+
 (ert-deftest supersonic-tests-subsonic-play-queue ()
   "The server's play queue reads into ids, the index playing and seconds;
 saving sends ids around the one playing, the current id and milliseconds."
@@ -9112,6 +9181,7 @@ random ones, leaving out what is queued already."
     (supersonic-tests--with-backend
      `((live-p . ,(lambda () t))
        (queue . ,(aio-lambda () queue))
+       (status . ,(aio-lambda (_key) nil))
        (enqueue . ,(lambda (ids) (setq enqueued ids))))
      (cl-letf (((symbol-function 'supersonic-provider-track) (aio-lambda (id) (list :id id)))
                ((symbol-function 'supersonic-radio--more) (aio-lambda (_seed exclude _count)
